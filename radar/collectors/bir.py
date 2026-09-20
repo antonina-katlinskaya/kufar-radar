@@ -35,9 +35,12 @@ def make_key(building,unit,floor,area):
     return hashlib.sha1(f'{building or ""}|{unit or ""}|{floor or ""}|{area or ""}'.encode()).hexdigest()
 
 async def _parse_html(page, html, rooms):
-    rows = await page.evaluate("""html => {
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      return Array.from(doc.querySelectorAll('tr')).map(tr => ({
+    rows = await page.evaluate(r"""html => {
+      const table = document.createElement('table');
+      const tbody = document.createElement('tbody');
+      table.appendChild(tbody);
+      tbody.innerHTML = html;
+      return Array.from(tbody.querySelectorAll('tr')).map(tr => ({
         cells: Array.from(tr.querySelectorAll('td')).map(td => td.innerText.replace(/\s+/g,' ').trim()),
         html: tr.outerHTML
       }));
