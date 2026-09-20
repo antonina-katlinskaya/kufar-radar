@@ -64,9 +64,10 @@ def save_bir(db,items):
             stm.append(('INSERT INTO bir_versions(object_key,observed_at,price_regular_eur,price_fast_eur,area,rooms,floor,official_address,raw_json) VALUES(?,?,?,?,?,?,?,?,?)',
               [x.object_key,ts,x.price_regular_eur,x.price_fast_eur,x.area,x.rooms,x.floor,x.official_address,json.dumps(x.raw,ensure_ascii=False)]))
 
+    previous_good=db.get_state('last_bir_success') or ts
     for key,old in cur.items():
         if old.get('active') and key not in seen:
-            stm.append(('UPDATE bir_objects SET active=0,last_seen_at=? WHERE object_key=?',[ts,key]))
+            stm.append(('UPDATE bir_objects SET active=0,last_seen_at=? WHERE object_key=?',[previous_good,key]))
 
     for i in range(0,len(stm),75): db.batch(stm[i:i+75])
 
@@ -86,4 +87,14 @@ def current_kufar(db,profile_id):
         try: raw=json.loads(r.get('raw_json') or '{}')
         except: pass
         out.append(KufarListing(r['ad_id'],r.get('url') or '',profile_id,r.get('price_eur'),r.get('price_byn'),r.get('area'),r.get('rooms'),r.get('floor'),r.get('address'),r.get('title'),raw))
+    return out
+
+
+def inactive_bir(db):
+    out=[]
+    for r in db.query('SELECT * FROM bir_objects WHERE active=0'):
+        raw={}
+        try: raw=json.loads(r.get('raw_json') or '{}')
+        except: pass
+        out.append(BirListing(r['object_key'],r.get('building_name'),r.get('official_address'),r.get('unit_no'),r.get('price_regular_eur'),r.get('price_fast_eur'),r.get('area'),r.get('rooms'),r.get('floor'),raw))
     return out
