@@ -94,6 +94,7 @@ class KufarCollector:
         params={'atid':settings.kufar_profile_id,'lang':'ru','size':'45','typ':'sell','prn':'1000','sort':'lst.d'}
         found={}
         cursor=None
+        api_total=0
         async with httpx.AsyncClient(timeout=60,follow_redirects=True,headers={'User-Agent':'Mozilla/5.0'}) as client:
             for page_no in range(1,max_pages+1):
                 q=dict(params)
@@ -101,7 +102,7 @@ class KufarCollector:
                 r=await client.get(API_URL,params=q)
                 r.raise_for_status()
                 data=r.json()
-                api_total=data.get('total') or 0
+                api_total=data.get('total') or api_total
                 ads=data.get('ads') or []
                 for d in ads:
                     x=parse_ad_dict(d,settings.kufar_profile_id)
@@ -113,30 +114,33 @@ class KufarCollector:
                         nxt=p['token']; break
                 if not nxt or not ads: break
                 cursor=nxt
-        # A changing newest-first feed can shift while we scan. If the API total says rows are
-        # still missing, read from the oldest side too and merge by ad_id.
-        if 'api_total' in locals() and api_total and len(found)<api_total:
-            q=dict(params); q['sort']='lst.a'
-            cursor2=None
-            try:
-                for page_no in range(1,8):
-                    qq=dict(q)
-                    if cursor2: qq['cursor']=cursor2
-                    r=await client.get(API_URL,params=qq); r.raise_for_status(); data=r.json()
-                    for d in data.get('ads') or []:
-                        x=parse_ad_dict(d,settings.kufar_profile_id)
-                        if x: found[x.ad_id]=x
-                    self.diagnostics.append((str(r.url),'GET',r.status_code,r.headers.get('content-type',''),f'oldest_pass={page_no};total_seen={len(found)};api_total={data.get("total")}'))
-                    if len(found)>=api_total: break
-                    cursor2=None
-                    for p in ((data.get('pagination') or {}).get('pages') or []):
-                        if p.get('label')=='next' and p.get('token'): cursor2=p['token']; break
-                    if not cursor2: break
-            except Exception as e:
-                self.diagnostics.append(('oldest-pass','GET',None,'',f'ignored error: {e!r}'))
 
-        # Monitor every ad owned by the selected manager. Scope to Minsk World happens in audit,
-        # so a deliberately wrong district/address cannot make an ad disappear from monitoring.
+            # The newest-first feed can shift while it is being scanned. If rows are still
+            # missing according to total, merge a few pages from the oldest side.
+            if api_total and len(found)<api_total:
+                oldest_params=dict(params); oldest_params['sort']='lst.a'
+                cursor2=None
+                try:
+                    for page_no in range(1,8):
+                        q=dict(oldest_params)
+                        if cursor2: q['cursor']=cursor2
+                        r=await client.get(API_URL,params=q)
+                        r.raise_for_status()
+                        data=r.json()
+                        ads=data.get('ads') or []
+                        for d in ads:
+                            x=parse_ad_dict(d,settings.kufar_profile_id)
+                            if x: found[x.ad_id]=x
+                        self.diagnostics.append((str(r.url),'GET',r.status_code,r.headers.get('content-type',''),f'oldest_pass={page_no};ads={len(ads)};total_seen={len(found)};api_total={data.get("total")}'))
+                        if len(found)>=api_total: break
+                        cursor2=None
+                        for p in ((data.get('pagination') or {}).get('pages') or []):
+                            if p.get('label')=='next' and p.get('token'):
+                                cursor2=p['token']; break
+                        if not cursor2 or not ads: break
+                except Exception as e:
+                    self.diagnostics.append(('oldest-pass','GET',None,'',f'ignored error: {e!r}'))
+
         return [x for x in found.values() if contact_person(x).casefold()==settings.kufar_contact_person.casefold()]
 
 async def screenshot_ad(url,path):
