@@ -78,5 +78,33 @@ class BirCollector:
                 self.diagnostics.append((endpoint,'POST',resp.status,resp.headers.get('content-type',''),f'room={room_filter};len={len(text)}'))
                 for x in await _parse_html(page,text,room_count):
                     found[x.object_key]=x
+
+            # New Minsk World buildings often have an empty text address in Bir, but the
+            # object-detail endpoint provides a stable building GPS point. One detail request
+            # per building is enough; attach that GPS to every unit in the same building.
+            detail_endpoint='https://bir.by/ajax/get-object-by-tablerow-click/'
+            reps={}
+            for x in found.values():
+                if x.building_name and x.building_name not in reps:
+                    reps[x.building_name]=x
+            gps_by_building={}
+            for building,x in reps.items():
+                try:
+                    resp=await ctx.request.post(
+                        detail_endpoint,
+                        headers={'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Referer':settings.bir_search_url},
+                        data=urlencode({'objectid':x.object_key})
+                    )
+                    d=await resp.json()
+                    gps=str(d.get('gps') or '').strip()
+                    if gps:
+                        gps_by_building[building]=gps
+                except Exception:
+                    continue
+            for x in found.values():
+                gps=gps_by_building.get(x.building_name)
+                if gps:
+                    x.raw['gps']=gps
+            self.diagnostics.append((detail_endpoint,'POST',200,'application/json',f'building_gps={len(gps_by_building)}/{len(reps)}'))
             await browser.close()
         return list(found.values())
