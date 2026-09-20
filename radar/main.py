@@ -32,6 +32,11 @@ def fmt_num(v, decimals=2):
         return s.rstrip('0').rstrip(',')
     except: return str(v)
 
+def fmt_area(v):
+    if v is None: return '—'
+    try: return f"{float(v):.2f}".replace('.',',')
+    except: return str(v)
+
 def fmt_eur(v):
     if v is None: return '—'
     try: return f"{float(v):,.0f}".replace(',',' ')+' €'
@@ -59,7 +64,7 @@ def fmt_event(db,e,k):
 
     specs=[]
     if k.rooms is not None: specs.append(f"{fmt_rooms(k.rooms)}-комн.")
-    if k.area is not None: specs.append(f"{fmt_num(k.area)} м²")
+    if k.area is not None: specs.append(f"{fmt_area(k.area)} м²")
     if k.floor is not None: specs.append(f"{fmt_rooms(k.floor)} этаж")
     if specs: parts.append("Квартира: "+", ".join(specs))
 
@@ -73,7 +78,7 @@ def fmt_event(db,e,k):
           f"Спеццена Bir: {fmt_eur(bv.get('fast'))}",
         ]
     elif field=='area':
-        parts += ['',f"Kufar: {fmt_num(e.get('new_value'))} м²",f"Bir: {fmt_num(e.get('bir_value'))} м²"]
+        parts += ['',f"Kufar: {fmt_area(e.get('new_value'))} м²",f"Bir: {fmt_area(e.get('bir_value'))} м²"]
     elif field=='rooms':
         parts += ['',f"Kufar: {fmt_rooms(e.get('new_value'))} комн.",f"Bir: {fmt_rooms(e.get('bir_value'))} комн."]
     elif field=='floor':
@@ -88,7 +93,7 @@ def fmt_event(db,e,k):
 
 def save_diag(db,source,diag):
     ts=datetime.now(timezone.utc).isoformat(); stm=[]; seen=set()
-    for row in diag[-100:]:
+    for row in diag[-10:]:
         url=row[0] if len(row)>0 else None
         method=row[1] if len(row)>1 else None
         status=row[2] if len(row)>2 else None
@@ -125,13 +130,13 @@ async def collect_kufar(db):
 def close_inactive_ad_events(db):
     ts=datetime.now(timezone.utc).isoformat()
     db.execute(
-      'UPDATE events SET active=0,resolved_at=? WHERE active=1 '
+      'UPDATE events SET active=0,resolved_at=? WHERE active=1 AND occurred_at>=? '
       'AND ad_id IN (SELECT ad_id FROM kufar_ads WHERE active=0)',
-      [ts]
+      [ts,settings.live_cutoff_utc]
     )
 
 def active_event_count(db):
-    rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1')
+    rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1 AND occurred_at>=?',[settings.live_cutoff_utc])
     return int(rows[0]['n']) if rows else 0
 
 def process_updates(db,tg):
@@ -167,9 +172,10 @@ def summary_rows(db):
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
-         WHERE e.active=1 AND k.active=1
+         WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
          ORDER BY e.occurred_at DESC
-         LIMIT 250'''
+         LIMIT 250''',
+      [settings.live_cutoff_utc]
     )
 
 def summary_line(r):
@@ -179,7 +185,7 @@ def summary_line(r):
     if building: bits.append(str(building))
     if address and (not building or address.casefold() not in str(building).casefold()): bits.append(str(address))
     if r.get('rooms') is not None: bits.append(f"{fmt_rooms(r.get('rooms'))}-комн.")
-    if r.get('area') is not None: bits.append(f"{fmt_num(r.get('area'))} м²")
+    if r.get('area') is not None: bits.append(f"{fmt_area(r.get('area'))} м²")
     if r.get('floor') is not None: bits.append(f"{fmt_rooms(r.get('floor'))} эт.")
     label=', '.join(bits) if bits else 'Объявление'
     return f"• {label}\n  {r.get('url') or ''}".rstrip()
