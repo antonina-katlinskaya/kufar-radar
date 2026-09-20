@@ -11,7 +11,6 @@ from .audit import AuditSession
 
 MINSK=ZoneInfo('Europe/Minsk')
 KEYBOARD=[
-  [{'text':'🔎 Проверить сейчас','callback_data':'check_now'}],
   [{'text':'📋 Актуальное состояние','callback_data':'state_now'}]
 ]
 
