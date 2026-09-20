@@ -14,5 +14,6 @@ class Settings:
     cf_token: str = os.getenv('CF_D1_API_TOKEN', '')
     headless: bool = os.getenv('HEADLESS', '1') != '0'
     send_screenshots: bool = os.getenv('SEND_SCREENSHOTS', '1') != '0'
+    live_cutoff_utc: str = os.getenv('LIVE_CUTOFF_UTC', '2026-09-20T19:57:00+00:00')
 
 settings = Settings()
