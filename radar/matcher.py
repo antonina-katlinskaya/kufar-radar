@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 from .models import KufarListing, BirListing
 
 @dataclass
@@ -8,15 +9,20 @@ class MatchResult:
     reason: str
     mismatches: dict
 
-def norm_address(v: str | None) -> str:
-    if not v: return ''
+def norm_address(v: str | None) -> list[str]:
+    if not v: return []
     s=v.lower().replace('ё','е')
-    for x in ['г.','город','ул.','улица',',','.','корпус','  ']: s=s.replace(x,' ')
-    return ' '.join(s.split())
+    tokens=re.findall(r'[a-zа-я0-9]+',s)
+    stop={'г','город','минск','ул','улица','дом','д','корпус','корп','проспект','пр'}
+    return [t for t in tokens if t not in stop]
 
 def address_equal(a,b):
     aa,bb=norm_address(a),norm_address(b)
-    return bool(aa and bb and (aa==bb or aa in bb or bb in aa))
+    if not aa or not bb: return False
+    na={x for x in aa if x.isdigit()}; nb={x for x in bb if x.isdigit()}
+    if na and nb and not (na & nb): return False
+    wa={x for x in aa if not x.isdigit()}; wb={x for x in bb if not x.isdigit()}
+    return bool(wa and wb and (wa<=wb or wb<=wa or len(wa&wb)>=max(1,min(len(wa),len(wb))-1)))
 
 def area_close(a,b,tol=0.09):
     return a is not None and b is not None and abs(a-b)<=tol
@@ -55,11 +61,11 @@ def match_new(k,candidates):
     scored.sort(key=lambda x:(x[0],x[1],x[2].object_key))
     if not scored: return MatchResult(None,'NONE','No sufficiently comparable Bir object',{})
     best=scored[0]
-    tied=[x for x in scored if x[0]==best[0] and x[1]==best[1]]
-    if len(tied)>1: return MatchResult(None,'AMBIGUOUS',f'{len(tied)} Bir candidates tie',{})
     mism,neg,b,v=best; known=sum(x is not None for x in v.values()); matches=-neg
     if mism==0 and matches>=3: conf='EXACT'
-    elif mism==1 and known>=4: conf='HIGH'
+    elif mism==1 and known>=4 and matches>=3: conf='HIGH'
     elif mism<=2 and matches>=3: conf='MEDIUM'
-    else: return MatchResult(None,'NONE','No unique enough Bir object',{})
+    else: return MatchResult(None,'NONE',f'Best Bir candidate only matches {matches}/{known} comparable fields',{})
+    tied=[x for x in scored if x[0]==best[0] and x[1]==best[1]]
+    if len(tied)>1: return MatchResult(None,'AMBIGUOUS',f'{len(tied)} Bir candidates tie at an otherwise acceptable score',{})
     return MatchResult(b,conf,f'{matches}/{known} comparable fields match; {mism} disagree',mismatch_map(k,b))
