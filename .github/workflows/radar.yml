@@ -2,9 +2,6 @@ name: Radar
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.radar-trigger'
 
 permissions:
   contents: read
