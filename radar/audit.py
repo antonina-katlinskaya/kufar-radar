@@ -50,16 +50,17 @@ class AuditSession:
             return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':'Historical Bir match is ambiguous','mismatches':{}}
 
         known=sum(v is not None and v!='' for v in [k.price_eur,k.area,k.rooms,k.floor,k.address])
-        if known>=4:
+        if known>=4 and historical.obj and historical.confidence in {'EXACT','HIGH'}:
             return {
               'status':'NO_BIR_OBJECT',
               'ad_id':k.ad_id,
-              'object_key':historical.obj.object_key if historical.obj and historical.confidence in {'EXACT','HIGH'} else None,
-              'reason':historical.reason if historical.obj else r.reason,
+              'object_key':historical.obj.object_key,
+              'reason':historical.reason,
               'mismatches':{'existence':('active Kufar','no matching current Bir object')}
             }
 
-        return {'status':'INSUFFICIENT','ad_id':k.ad_id,'reason':r.reason,'mismatches':{}}
+        # No confident historical apartment => do not turn uncertainty into an alert.
+        return {'status':'INSUFFICIENT','ad_id':k.ad_id,'reason':'No confident current or historical Bir match','mismatches':{}}
 
     def sync(self,k,result):
         ts=now(); status=result.get('status'); mism=result.get('mismatches') or {}; desired={}
