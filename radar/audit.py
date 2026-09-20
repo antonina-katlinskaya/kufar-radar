@@ -2,13 +2,14 @@ import json
 from .matcher import match_new
 from .store import fp, now, current_bir
 from .collectors.kufar import is_mw_claimed
+from .config import settings
 
 class AuditSession:
     def __init__(self, db):
         self.db=db
         self.candidates=current_bir(db)
         self.active={}
-        for r in db.query('SELECT * FROM events WHERE active=1'):
+        for r in db.query('SELECT * FROM events WHERE active=1 AND occurred_at >= ?',[settings.live_cutoff_utc]):
             self.active.setdefault(r['ad_id'],{})[r['field_name']]=r
         self.statements=[]
 
