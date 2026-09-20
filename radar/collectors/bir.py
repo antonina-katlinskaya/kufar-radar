@@ -14,6 +14,23 @@ def _num(v):
 def _int(v):
     n=_num(v); return int(n) if n is not None else None
 
+def _eur_from_dual(cell):
+    # Bir renders BYN and EUR into the same text node, e.g. "157 625 45 378 €".
+    # Find the split whose BYN/EUR ratio looks like a real exchange rate.
+    nums=re.findall(r'\\d+', (cell or '').replace('\\xa0',' '))
+    if not nums: return None
+    best=None
+    for i in range(1,len(nums)):
+        left=int(''.join(nums[:i])); right=int(''.join(nums[i:]))
+        if right<=0: continue
+        ratio=left/right
+        if 2.0 <= ratio <= 5.0:
+            score=abs(ratio-3.4)
+            if best is None or score<best[0]: best=(score,float(right))
+    if best: return best[1]
+    # Fallback: last numeric group(s) before EUR.
+    return float(nums[-1]) if len(nums)==1 else None
+
 def make_key(building,unit,floor,area):
     return hashlib.sha1(f'{building or ""}|{unit or ""}|{floor or ""}|{area or ""}'.encode()).hexdigest()
 
