@@ -47,11 +47,17 @@ def current_bir(db):
     from .models import BirListing
     out=[]
     for r in db.query('SELECT * FROM bir_objects WHERE active=1'):
-        out.append(BirListing(r['object_key'],r.get('building_name'),r.get('official_address'),r.get('unit_no'),r.get('price_regular_eur'),r.get('price_fast_eur'),r.get('area'),r.get('rooms'),r.get('floor'),{}))
+        raw={}
+        try: raw=json.loads(r.get('raw_json') or '{}')
+        except: pass
+        out.append(BirListing(r['object_key'],r.get('building_name'),r.get('official_address'),r.get('unit_no'),r.get('price_regular_eur'),r.get('price_fast_eur'),r.get('area'),r.get('rooms'),r.get('floor'),raw))
     return out
 
 def current_kufar(db,profile_id):
     out=[]
     for r in db.query('SELECT * FROM kufar_ads WHERE active=1 AND profile_id=?',[profile_id]):
-        out.append(KufarListing(r['ad_id'],r.get('url') or '',profile_id,r.get('price_eur'),r.get('price_byn'),r.get('area'),r.get('rooms'),r.get('floor'),r.get('address'),r.get('title'),{}))
+        raw={}
+        try: raw=json.loads(r.get('raw_json') or '{}')
+        except: pass
+        out.append(KufarListing(r['ad_id'],r.get('url') or '',profile_id,r.get('price_eur'),r.get('price_byn'),r.get('area'),r.get('rooms'),r.get('floor'),r.get('address'),r.get('title'),raw))
     return out
