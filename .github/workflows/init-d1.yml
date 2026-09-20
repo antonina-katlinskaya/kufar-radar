@@ -1,0 +1,27 @@
+name: Initialize D1
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema to Cloudflare D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, urllib.request
+          sql=pathlib.Path('schema.sql').read_text()
+          url=f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CF_ACCOUNT_ID']}/d1/database/{os.environ['CF_D1_DATABASE_ID']}/query"
+          req=urllib.request.Request(url,data=json.dumps({'sql':sql}).encode(),headers={'Authorization':'Bearer '+os.environ['CF_D1_API_TOKEN'],'Content-Type':'application/json'},method='POST')
+          with urllib.request.urlopen(req,timeout=60) as r:
+              body=json.loads(r.read())
+          if not body.get('success'):
+              raise SystemExit(body)
+          print('D1 schema initialized successfully')
+          PY
