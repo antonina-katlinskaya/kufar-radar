@@ -64,16 +64,27 @@ def parse_ad_dict(d:dict[str,Any], profile_id:str):
     address=_account_param(d,'address') or d.get('address') or d.get('addressWithDistrict')
     title=d.get('subject') or d.get('title')
     rooms=_num(_ad_param(d,'rooms')); floor=_num(_ad_param(d,'floor'))
+    compact_raw={
+      'ad_id':d.get('ad_id',d.get('adId')),
+      'ad_link':url,
+      'list_time':d.get('list_time',d.get('date')),
+      'subject':title,
+      'currency':d.get('currency'),
+      'price_byn':d.get('price_byn'),
+      'calculator':d.get('calculator') or [],
+      'ad_parameters':d.get('ad_parameters') or d.get('adParams') or {},
+      'account_parameters':d.get('account_parameters') or d.get('accountParams') or {},
+    }
     return KufarListing(
       ad_id=aid,url=str(url),profile_id=profile_id,
       price_eur=_calculator_price(d,'EUR'),
-      price_byn=_calculator_price(d,'BYN') or _num(d.get('price_byn')),
+      price_byn=_calculator_price(d,'BYN') or (_num(d.get('price_byn'))/100.0 if d.get('price_byn') else None),
       area=_num(_ad_param(d,'size')),
       rooms=int(rooms) if rooms is not None else None,
       floor=int(floor) if floor is not None else None,
       address=str(address) if address else None,
       title=str(title) if title else None,
-      raw=d)
+      raw=compact_raw)
 
 def contact_person(item):
     return str(_account_param(item.raw,'contact_person') or _account_param(item.raw,'contactPerson') or '').strip()
