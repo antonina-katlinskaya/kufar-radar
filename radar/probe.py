@@ -1,41 +1,38 @@
-import asyncio, json
-import httpx
+import asyncio
+from collections import Counter
+from radar.collectors.kufar import KufarCollector, is_mw_claimed
 from radar.collectors.bir import BirCollector
+from radar.matcher import match_new, vector
 
-DETAIL='https://bir.by/ajax/get-object-by-tablerow-click/'
-TARGET_BUILDINGS=['11.2','4.2','21.1','24.2.3']
+TARGETS=['1085587936','1085820441','1085809888','1085714847','1085699117']
 
 async def main():
-    b=BirCollector()
-    items=await b.collect()
-    print('objects',len(items))
-    async with httpx.AsyncClient(timeout=40,follow_redirects=True,headers={
-        'User-Agent':'Mozilla/5.0',
-        'X-Requested-With':'XMLHttpRequest',
-        'Referer':'https://bir.by/search-by-parameters/',
-        'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8',
-    }) as c:
-        for name in TARGET_BUILDINGS:
-            x=next((o for o in items if o.building_name==name),None)
-            if not x:
-                print('MISSING_BUILDING',name); continue
-            r=await c.post(DETAIL,data={'objectid':x.object_key})
-            print('\n===',name,x.object_key,'status',r.status_code,'ct',r.headers.get('content-type'),'===')
-            try:
-                d=r.json()
-            except Exception as e:
-                print('NONJSON',repr(e),r.text[:500]); continue
-            print('keys',sorted(d.keys()))
-            compact={}
-            for k,v in d.items():
-                kl=k.lower()
-                if k=='image' or (isinstance(v,str) and len(v)>1000):
-                    continue
-                if isinstance(v,(str,int,float,bool)) or v is None:
-                    compact[k]=v
-            print('scalars',json.dumps(compact,ensure_ascii=False,sort_keys=True))
-            addressish={k:v for k,v in compact.items() if any(t in k.lower() for t in ['adres','address','street','ulitsa','dom','house','korpus','coord','lat','lon'])}
-            print('addressish',json.dumps(addressish,ensure_ascii=False,sort_keys=True))
+    k=KufarCollector(); ks=await k.collect()
+    b=BirCollector(); bs=await b.collect()
+    print('counts',{'kufar_alena':len(ks),'kufar_mw':sum(is_mw_claimed(x) for x in ks),'bir':len(bs),'bir_gps':sum(bool((x.raw or {}).get('gps')) for x in bs),'bir_address':sum(bool(x.official_address) for x in bs)})
+    byid={x.ad_id:x for x in ks}
+    print('\nTARGETS')
+    for aid in TARGETS:
+        x=byid.get(aid)
+        if not x:
+            print(aid,'MISSING'); continue
+        r=match_new(x,bs)
+        print(aid,{
+          'k':{'eur':x.price_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor,'address':x.address},
+          'result':r.confidence,'reason':r.reason,
+          'bir':None if not r.obj else {'key':r.obj.object_key,'building':r.obj.building_name,'address':r.obj.official_address,'gps':r.obj.raw.get('gps'),'unit':r.obj.unit_no,'reg':r.obj.price_regular_eur,'fast':r.obj.price_fast_eur,'area':r.obj.area,'rooms':r.obj.rooms,'floor':r.obj.floor},
+          'vector':None if not r.obj else vector(x,r.obj),
+          'mismatches':r.mismatches
+        })
+
+    stats=Counter(); mismatches=Counter()
+    for x in [a for a in ks if is_mw_claimed(a)]:
+        r=match_new(x,bs); stats[r.confidence]+=1
+        if r.obj:
+            for f in r.mismatches: mismatches[f]+=1
+    print('\nSTATS',dict(stats))
+    print('MISMATCH_FIELDS',dict(mismatches))
+    print('bir_diag_tail',b.diagnostics[-3:])
 
 if __name__=='__main__':
     asyncio.run(main())
