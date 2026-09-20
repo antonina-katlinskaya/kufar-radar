@@ -38,10 +38,15 @@ def _camel_param(ad,key):
     return v
 
 def _account_param(ad,key):
-    if isinstance(ad.get('account_parameters'),list):
-        return _list_param(ad.get('account_parameters'),key)
+    ap=ad.get('account_parameters')
+    if isinstance(ap,list):
+        return _list_param(ap,key)
+    if isinstance(ap,dict):
+        p=ap.get(key) or {}
+        if isinstance(p,dict): return p.get('v')
+        return p
     p=(ad.get('accountParams') or {}).get(key) or {}
-    return p.get('v')
+    return p.get('v') if isinstance(p,dict) else p
 
 def _ad_param(ad,key):
     if isinstance(ad.get('ad_parameters'),list):
