@@ -10,6 +10,9 @@ def main():
     print('rows',rows)
     assert len(rows)==2
     db.execute("DELETE FROM state WHERE key IN ('__smoke_a','__smoke_b')")
+    print('telegram_chat_configured', bool(db.get_state('telegram_chat_id')))
+    print('baseline_complete', db.get_state('baseline_complete','0'))
+    print('active_events', (db.query('SELECT COUNT(*) AS n FROM events WHERE active=1') or [{'n':0}])[0]['n'])
     print('D1_SMOKE_OK')
 
 if __name__=='__main__':
@@ -19,4 +22,4 @@ if __name__=='__main__':
 
 # d1 access recheck 2
 
-# d1 access recheck 4
+# state status check
