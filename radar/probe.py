@@ -60,3 +60,4 @@ async def main():
     b=BirCollector(); items2=await b.collect(); print('count:',len(items2)); print('first:',items2[:12]); print('rooms counts:',{n:sum(1 for x in items2 if x.rooms==n) for n in range(1,6)}); print('diagnostics:',b.diagnostics[-20:])
 
 if __name__=='__main__': asyncio.run(main())
+\n# probe trigger v3\n
