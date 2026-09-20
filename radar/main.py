@@ -215,10 +215,9 @@ def send_state_summary(db,tg,chat,keyboard=True):
             else:
                 cur+=line
         chunks.append(cur)
-        for i,msg in enumerate(chunks):
-            tg.send(chat,msg,KEYBOARD if keyboard and field==order[-1] and i==len(chunks)-1 else None)
+        for msg in chunks:
+            tg.send(chat,msg)
 
-    # If the last predefined category was absent, ensure controls are still easy to reach.
     if keyboard:
         tg.send(chat,'Управление радаром:',KEYBOARD)
 
