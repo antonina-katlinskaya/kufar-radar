@@ -1,37 +1,41 @@
 import asyncio, json
-from playwright.async_api import async_playwright
-from radar.config import settings
+import httpx
+from radar.collectors.bir import BirCollector
+
+DETAIL='https://bir.by/ajax/get-object-by-tablerow-click/'
+TARGET_BUILDINGS=['11.2','4.2','21.1','24.2.3']
 
 async def main():
-    async with async_playwright() as p:
-        b=await p.chromium.launch(headless=True)
-        ctx=await b.new_context(locale='ru-RU',user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36')
-        pg=await ctx.new_page()
-        requests=[]; responses=[]
-        def on_req(r):
-            if 'bir.by' in r.url and r.resource_type in {'xhr','fetch'}:
-                requests.append((r.url,r.method,r.post_data))
-        async def on_resp(r):
-            if 'bir.by' in r.url and r.request.resource_type in {'xhr','fetch'}:
-                try: body=(await r.text())[:5000]
-                except: body=''
-                responses.append((r.url,r.status,r.headers.get('content-type',''),body))
-        pg.on('request',on_req); pg.on('response',on_resp)
-        await pg.goto(settings.bir_search_url,wait_until='domcontentloaded',timeout=90000)
-        await pg.wait_for_timeout(800)
-        rows=pg.locator('tr.loadobject')
-        print('rows',await rows.count())
-        if await rows.count():
-            row=rows.first
-            print('row_id',await row.get_attribute('data-loadobject'))
-            print('row_text',' '.join((await row.inner_text()).split()))
-            await row.click(timeout=5000)
-            await pg.wait_for_timeout(1600)
-            print('modal_address', await pg.locator('.modal-adres').inner_text() if await pg.locator('.modal-adres').count() else 'NO')
-        print('REQUESTS')
-        for x in requests: print(x)
-        print('RESPONSES')
-        for x in responses: print(x)
-        await b.close()
+    b=BirCollector()
+    items=await b.collect()
+    print('objects',len(items))
+    async with httpx.AsyncClient(timeout=40,follow_redirects=True,headers={
+        'User-Agent':'Mozilla/5.0',
+        'X-Requested-With':'XMLHttpRequest',
+        'Referer':'https://bir.by/search-by-parameters/',
+        'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8',
+    }) as c:
+        for name in TARGET_BUILDINGS:
+            x=next((o for o in items if o.building_name==name),None)
+            if not x:
+                print('MISSING_BUILDING',name); continue
+            r=await c.post(DETAIL,data={'objectid':x.object_key})
+            print('\n===',name,x.object_key,'status',r.status_code,'ct',r.headers.get('content-type'),'===')
+            try:
+                d=r.json()
+            except Exception as e:
+                print('NONJSON',repr(e),r.text[:500]); continue
+            print('keys',sorted(d.keys()))
+            compact={}
+            for k,v in d.items():
+                kl=k.lower()
+                if k=='image' or (isinstance(v,str) and len(v)>1000):
+                    continue
+                if isinstance(v,(str,int,float,bool)) or v is None:
+                    compact[k]=v
+            print('scalars',json.dumps(compact,ensure_ascii=False,sort_keys=True))
+            addressish={k:v for k,v in compact.items() if any(t in k.lower() for t in ['adres','address','street','ulitsa','dom','house','korpus','coord','lat','lon'])}
+            print('addressish',json.dumps(addressish,ensure_ascii=False,sort_keys=True))
 
-if __name__=='__main__': asyncio.run(main())
+if __name__=='__main__':
+    asyncio.run(main())
