@@ -68,8 +68,11 @@ def event_context(db,e,k):
     if key:
         rows=db.query('SELECT * FROM bir_objects WHERE object_key=? LIMIT 1',[key])
         if rows: b=rows[0]
-    building=b.get('building_name')
-    address=k.address or b.get('official_address')
+    raw={}
+    try: raw=json.loads(b.get('raw_json') or '{}')
+    except: pass
+    building=b.get('building_name') or raw.get('house_name') or raw.get('building')
+    address=k.address or b.get('official_address') or raw.get('address')
     return b,building,address
 
 def fmt_event_group(db,events,k):
