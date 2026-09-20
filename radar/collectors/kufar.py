@@ -63,13 +63,18 @@ def is_scope(item:KufarListing):
     person = contact_person(item).casefold() == settings.kufar_contact_person.casefold()
     return mw and person
 
-def _cursor_page(url):
+def _cursor_payload(url):
     try:
         q=parse_qs(urlparse(url).query); c=q.get('cursor',[None])[0]
         if not c: return None
-        raw=base64.b64decode(unquote(c)).decode()
-        return int(json.loads(raw).get('p'))
+        return json.loads(base64.b64decode(unquote(c)).decode())
     except: return None
+
+def _cursor_url(template, page_no):
+    d=dict(template); d['p']=page_no
+    token=base64.b64encode(json.dumps(d,separators=(',',':')).encode()).decode()
+    from urllib.parse import quote
+    return f'https://re.kufar.by/agency?userId={settings.kufar_profile_id}&cursor={quote(token)}'
 
 def _walk(x):
     if isinstance(x,dict):
@@ -96,22 +101,30 @@ class KufarCollector:
             browser=await p.chromium.launch(headless=settings.headless)
             ctx=await browser.new_context(locale='ru-RU', user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36')
             page=await ctx.new_page()
-            url=settings.kufar_profile_url
-            seen_urls=set()
-            for page_no in range(1,max_pages+1):
-                if url in seen_urls: break
-                seen_urls.add(url)
-                resp=await page.goto(url,wait_until='domcontentloaded',timeout=90000)
-                await page.wait_for_timeout(350)
-                batch=await _page_ads(page)
-                found.update(batch)
-                self.diagnostics.append((url,'GET',resp.status if resp else None,(resp.headers.get('content-type','') if resp else ''),f'page={page_no};ads={len(batch)};total={len(found)}'))
-                links=await page.locator('a[href*="/agency?userId="][href*="cursor="]').evaluate_all('els=>els.map(e=>e.href)')
-                options=[(_cursor_page(h),h) for h in links]
-                options=[x for x in options if x[0] is not None and x[0]>page_no]
-                if not options: break
-                options.sort(key=lambda x:x[0])
-                url=options[0][1]
+
+            # First page: public profile URL.
+            resp=await page.goto(settings.kufar_profile_url,wait_until='domcontentloaded',timeout=90000)
+            await page.wait_for_timeout(350)
+            batch=await _page_ads(page); found.update(batch)
+            self.diagnostics.append((settings.kufar_profile_url,'GET',resp.status if resp else None,(resp.headers.get('content-type','') if resp else ''),f'page=1;ads={len(batch)};total={len(found)}'))
+
+            links=await page.locator('a[href*="/agency?userId="][href*="cursor="]').evaluate_all('els=>els.map(e=>e.href)')
+            templates=[_cursor_payload(h) for h in links]
+            templates=[x for x in templates if x]
+            template=templates[0] if templates else None
+
+            if template:
+                empty_streak=0
+                for page_no in range(2,max_pages+1):
+                    url=_cursor_url(template,page_no)
+                    resp=await page.goto(url,wait_until='domcontentloaded',timeout=90000)
+                    await page.wait_for_timeout(300)
+                    batch=await _page_ads(page)
+                    before=len(found); found.update(batch); added=len(found)-before
+                    self.diagnostics.append((url,'GET',resp.status if resp else None,(resp.headers.get('content-type','') if resp else ''),f'page={page_no};ads={len(batch)};added={added};total={len(found)}'))
+                    empty_streak = empty_streak + 1 if added==0 else 0
+                    if empty_streak>=2: break
+
             result=[x for x in found.values() if is_scope(x)]
             await browser.close()
         return result
