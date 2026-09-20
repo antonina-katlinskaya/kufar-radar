@@ -1,8 +1,12 @@
 name: Probe sources
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'radar/probe.py'
+      - 'radar/collectors/**'
 permissions:
-  contents: read
+  contents: write
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -21,4 +25,14 @@ jobs:
           KUFAR_PROFILE_URL: 'https://re.kufar.by/p/ooo-mezhdunarodnaya-rielterskaya-kompaniya-etazhi/11093294'
           BIR_SEARCH_URL: 'https://bir.by/search-by-parameters/'
           HEADLESS: '1'
-        run: python -m radar.probe
+        run: |
+          mkdir -p diagnostics
+          python -m radar.probe 2>&1 | tee diagnostics/latest_probe.txt
+      - name: Save diagnostic result
+        if: always()
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add diagnostics/latest_probe.txt
+          git diff --cached --quiet || git commit -m "diagnostic: update latest source probe"
+          git push
