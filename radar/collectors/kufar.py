@@ -23,6 +23,14 @@ def _list_param(rows,key):
             return v
     return None
 
+def _list_label(rows,key):
+    for p in rows or []:
+        if isinstance(p,dict) and p.get('p')==key:
+            v=p.get('vl')
+            if isinstance(v,list): return v[0] if v else None
+            return v
+    return None
+
 def _camel_param(ad,key):
     p=(ad.get('adParams') or {}).get(key) or {}
     v=p.get('v')
@@ -71,8 +79,12 @@ def contact_person(item):
     return str(_account_param(item.raw,'contact_person') or _account_param(item.raw,'contactPerson') or '').strip()
 
 def is_mw_claimed(item:KufarListing):
-    district=str(_ad_param(item.raw,'re_district') or '').lower()
-    complex_name=str(_ad_param(item.raw,'new_buildings_apartment_complex') or '').lower()
+    if isinstance(item.raw.get('ad_parameters'),list):
+        district=str(_list_label(item.raw.get('ad_parameters'),'re_district') or _ad_param(item.raw,'re_district') or '').lower()
+        complex_name=str(_list_label(item.raw.get('ad_parameters'),'new_buildings_apartment_complex') or _ad_param(item.raw,'new_buildings_apartment_complex') or '').lower()
+    else:
+        district=str(((item.raw.get('adParams') or {}).get('reDistrict') or {}).get('vl') or _ad_param(item.raw,'re_district') or '').lower()
+        complex_name=str(((item.raw.get('adParams') or {}).get('newBuildingsApartmentComplex') or {}).get('vl') or _ad_param(item.raw,'new_buildings_apartment_complex') or '').lower()
     raw=' '.join([district,complex_name,item.address or '',item.title or '']).lower()
     return any(h in raw for h in MW_HINTS)
 
@@ -89,6 +101,7 @@ class KufarCollector:
                 r=await client.get(API_URL,params=q)
                 r.raise_for_status()
                 data=r.json()
+                api_total=data.get('total') or 0
                 ads=data.get('ads') or []
                 for d in ads:
                     x=parse_ad_dict(d,settings.kufar_profile_id)
@@ -100,6 +113,28 @@ class KufarCollector:
                         nxt=p['token']; break
                 if not nxt or not ads: break
                 cursor=nxt
+        # A changing newest-first feed can shift while we scan. If the API total says rows are
+        # still missing, read from the oldest side too and merge by ad_id.
+        if 'api_total' in locals() and api_total and len(found)<api_total:
+            q=dict(params); q['sort']='lst.a'
+            cursor2=None
+            try:
+                for page_no in range(1,8):
+                    qq=dict(q)
+                    if cursor2: qq['cursor']=cursor2
+                    r=await client.get(API_URL,params=qq); r.raise_for_status(); data=r.json()
+                    for d in data.get('ads') or []:
+                        x=parse_ad_dict(d,settings.kufar_profile_id)
+                        if x: found[x.ad_id]=x
+                    self.diagnostics.append((str(r.url),'GET',r.status_code,r.headers.get('content-type',''),f'oldest_pass={page_no};total_seen={len(found)};api_total={data.get("total")}'))
+                    if len(found)>=api_total: break
+                    cursor2=None
+                    for p in ((data.get('pagination') or {}).get('pages') or []):
+                        if p.get('label')=='next' and p.get('token'): cursor2=p['token']; break
+                    if not cursor2: break
+            except Exception as e:
+                self.diagnostics.append(('oldest-pass','GET',None,'',f'ignored error: {e!r}'))
+
         # Monitor every ad owned by the selected manager. Scope to Minsk World happens in audit,
         # so a deliberately wrong district/address cannot make an ad disappear from monitoring.
         return [x for x in found.values() if contact_person(x).casefold()==settings.kufar_contact_person.casefold()]
