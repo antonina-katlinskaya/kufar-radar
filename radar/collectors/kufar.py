@@ -1,10 +1,11 @@
-import re, json, base64
-from urllib.parse import urlparse, parse_qs, unquote
+import re, json
 from typing import Any
+import httpx
 from playwright.async_api import async_playwright
 from ..config import settings
 from ..models import KufarListing
 
+API_URL='https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated'
 MW_HINTS=('минск мир','minsk world','минск-мир')
 
 def _num(v):
@@ -14,16 +15,30 @@ def _num(v):
     m=re.search(r'-?\d+(?:\.\d+)?',s)
     return float(m.group()) if m else None
 
-def _param(ad, key):
+def _list_param(rows,key):
+    for p in rows or []:
+        if isinstance(p,dict) and p.get('p')==key:
+            v=p.get('v')
+            if isinstance(v,list): return v[0] if v else None
+            return v
+    return None
+
+def _camel_param(ad,key):
     p=(ad.get('adParams') or {}).get(key) or {}
     v=p.get('v')
-    if isinstance(v,list):
-        return v[0] if v else None
+    if isinstance(v,list): return v[0] if v else None
     return v
 
 def _account_param(ad,key):
+    if isinstance(ad.get('account_parameters'),list):
+        return _list_param(ad.get('account_parameters'),key)
     p=(ad.get('accountParams') or {}).get(key) or {}
     return p.get('v')
+
+def _ad_param(ad,key):
+    if isinstance(ad.get('ad_parameters'),list):
+        return _list_param(ad.get('ad_parameters'),key)
+    return _camel_param(ad,key)
 
 def _calculator_price(ad,currency):
     for row in ad.get('calculator') or []:
@@ -33,101 +48,61 @@ def _calculator_price(ad,currency):
     return None
 
 def parse_ad_dict(d:dict[str,Any], profile_id:str):
-    # We only accept an actual ad object, not wrapper dictionaries that contain an ads[] list.
-    if 'adId' not in d or not isinstance(d.get('adParams'),dict):
-        return None
-    aid=str(d.get('adId'))
+    aid=d.get('ad_id',d.get('adId'))
+    if aid is None: return None
+    aid=str(aid)
     if not aid.isdigit() or len(aid)<8: return None
-    url=d.get('adViewLink') or f'https://re.kufar.by/vi/{aid}'
-    address=d.get('address') or _account_param(d,'address') or d.get('addressWithDistrict')
-    title=d.get('title') or d.get('subject')
+    url=d.get('ad_link') or d.get('adViewLink') or f'https://re.kufar.by/vi/{aid}'
+    address=_account_param(d,'address') or d.get('address') or d.get('addressWithDistrict')
+    title=d.get('subject') or d.get('title')
+    rooms=_num(_ad_param(d,'rooms')); floor=_num(_ad_param(d,'floor'))
     return KufarListing(
       ad_id=aid,url=str(url),profile_id=profile_id,
       price_eur=_calculator_price(d,'EUR'),
-      price_byn=_calculator_price(d,'BYN'),
-      area=_num(_param(d,'size')),
-      rooms=int(_num(_param(d,'rooms'))) if _num(_param(d,'rooms')) is not None else None,
-      floor=int(_num(_param(d,'floor'))) if _num(_param(d,'floor')) is not None else None,
+      price_byn=_calculator_price(d,'BYN') or _num(d.get('price_byn')),
+      area=_num(_ad_param(d,'size')),
+      rooms=int(rooms) if rooms is not None else None,
+      floor=int(floor) if floor is not None else None,
       address=str(address) if address else None,
       title=str(title) if title else None,
       raw=d)
 
 def contact_person(item):
-    return str(_account_param(item.raw,'contactPerson') or '').strip()
+    return str(_account_param(item.raw,'contact_person') or _account_param(item.raw,'contactPerson') or '').strip()
 
-def is_scope(item:KufarListing):
-    raw=json.dumps(item.raw,ensure_ascii=False).lower()
-    district=str(((item.raw.get('adParams') or {}).get('reDistrict') or {}).get('vl') or '').lower()
-    complex_name=str(((item.raw.get('adParams') or {}).get('newBuildingsApartmentComplex') or {}).get('vl') or '').lower()
-    mw = any(h in district or h in complex_name or h in raw for h in MW_HINTS)
-    person = contact_person(item).casefold() == settings.kufar_contact_person.casefold()
-    return mw and person
-
-def _cursor_payload(url):
-    try:
-        q=parse_qs(urlparse(url).query); c=q.get('cursor',[None])[0]
-        if not c: return None
-        return json.loads(base64.b64decode(unquote(c)).decode())
-    except: return None
-
-def _cursor_url(template, page_no):
-    d=dict(template); d['p']=page_no
-    token=base64.b64encode(json.dumps(d,separators=(',',':')).encode()).decode()
-    from urllib.parse import quote
-    return f'https://re.kufar.by/agency?userId={settings.kufar_profile_id}&cursor={quote(token)}'
-
-def _walk(x):
-    if isinstance(x,dict):
-        yield x
-        for v in x.values():
-            yield from _walk(v)
-    elif isinstance(x,list):
-        for v in x: yield from _walk(v)
-
-async def _page_ads(page):
-    out={}
-    if await page.locator('script#__NEXT_DATA__').count():
-        data=json.loads(await page.locator('script#__NEXT_DATA__').text_content())
-        for d in _walk(data):
-            x=parse_ad_dict(d,settings.kufar_profile_id)
-            if x: out[x.ad_id]=x
-    return out
+def is_mw_claimed(item:KufarListing):
+    district=str(_ad_param(item.raw,'re_district') or '').lower()
+    complex_name=str(_ad_param(item.raw,'new_buildings_apartment_complex') or '').lower()
+    raw=' '.join([district,complex_name,item.address or '',item.title or '']).lower()
+    return any(h in raw for h in MW_HINTS)
 
 class KufarCollector:
     def __init__(self): self.diagnostics=[]
     async def collect(self,max_pages=100):
+        params={'atid':settings.kufar_profile_id,'lang':'ru','size':'45','typ':'sell','prn':'1000','sort':'lst.d'}
         found={}
-        async with async_playwright() as p:
-            browser=await p.chromium.launch(headless=settings.headless)
-            ctx=await browser.new_context(locale='ru-RU', user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36')
-            page=await ctx.new_page()
-
-            # First page: public profile URL.
-            resp=await page.goto(settings.kufar_profile_url,wait_until='domcontentloaded',timeout=90000)
-            await page.wait_for_timeout(350)
-            batch=await _page_ads(page); found.update(batch)
-            self.diagnostics.append((settings.kufar_profile_url,'GET',resp.status if resp else None,(resp.headers.get('content-type','') if resp else ''),f'page=1;ads={len(batch)};total={len(found)}'))
-
-            links=await page.locator('a[href*="/agency?userId="][href*="cursor="]').evaluate_all('els=>els.map(e=>e.href)')
-            templates=[_cursor_payload(h) for h in links]
-            templates=[x for x in templates if x]
-            template=templates[0] if templates else None
-
-            if template:
-                empty_streak=0
-                for page_no in range(2,max_pages+1):
-                    url=_cursor_url(template,page_no)
-                    resp=await page.goto(url,wait_until='domcontentloaded',timeout=90000)
-                    await page.wait_for_timeout(300)
-                    batch=await _page_ads(page)
-                    before=len(found); found.update(batch); added=len(found)-before
-                    self.diagnostics.append((url,'GET',resp.status if resp else None,(resp.headers.get('content-type','') if resp else ''),f'page={page_no};ads={len(batch)};added={added};total={len(found)}'))
-                    empty_streak = empty_streak + 1 if added==0 else 0
-                    if empty_streak>=2: break
-
-            result=[x for x in found.values() if is_scope(x)]
-            await browser.close()
-        return result
+        cursor=None
+        async with httpx.AsyncClient(timeout=60,follow_redirects=True,headers={'User-Agent':'Mozilla/5.0'}) as client:
+            for page_no in range(1,max_pages+1):
+                q=dict(params)
+                if cursor: q['cursor']=cursor
+                r=await client.get(API_URL,params=q)
+                r.raise_for_status()
+                data=r.json()
+                ads=data.get('ads') or []
+                for d in ads:
+                    x=parse_ad_dict(d,settings.kufar_profile_id)
+                    if x: found[x.ad_id]=x
+                self.diagnostics.append((str(r.url),'GET',r.status_code,r.headers.get('content-type',''),f'page={page_no};ads={len(ads)};total_seen={len(found)};api_total={data.get("total")}'))
+                nxt=None
+                for p in ((data.get('pagination') or {}).get('pages') or []):
+                    if p.get('label')=='next' and p.get('token'):
+                        nxt=p['token']; break
+                if not nxt or not ads: break
+                cursor=nxt
+        # Monitor every ad owned by the selected manager. Scope to Minsk World happens in audit,
+        # so a deliberately wrong district/address cannot make an ad disappear from monitoring.
+        return [x for x in found.values() if contact_person(x).casefold()==settings.kufar_contact_person.casefold()]
 
 async def screenshot_ad(url,path):
     async with async_playwright() as p:
