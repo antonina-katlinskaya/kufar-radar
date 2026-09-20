@@ -1,6 +1,7 @@
 import json
 from .matcher import match_new, mismatch_map, MatchResult
 from .store import fp, now, current_bir
+from .collectors.kufar import is_mw_claimed
 
 def audit_one(db,k):
     candidates=current_bir(db)
@@ -13,7 +14,12 @@ def audit_one(db,k):
         r=match_new(k,candidates)
         if r.obj and r.confidence in {'EXACT','HIGH'}:
             db.execute('INSERT INTO matches(ad_id,object_key,confidence,reason,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(ad_id) DO UPDATE SET object_key=excluded.object_key,confidence=excluded.confidence,reason=excluded.reason,updated_at=excluded.updated_at',[k.ad_id,r.obj.object_key,r.confidence,r.reason,now()])
-    if not r.obj: return {'status':r.confidence,'ad_id':k.ad_id,'reason':r.reason,'mismatches':{}}
+    if not r.obj:
+        # A new ad that does not claim Minsk World and has no convincing Bir match is outside this radar.
+        # Historical matches are handled above before this branch.
+        if not is_mw_claimed(k):
+            return {'status':'OUT_OF_SCOPE','ad_id':k.ad_id,'reason':'No Minsk World marker and no Bir match','mismatches':{}}
+        return {'status':r.confidence,'ad_id':k.ad_id,'reason':r.reason,'mismatches':{}}
     return {'status':'MISMATCH' if r.mismatches else 'OK','ad_id':k.ad_id,'object_key':r.obj.object_key,'confidence':r.confidence,'reason':r.reason,'mismatches':r.mismatches}
 
 def sync_events(db,k,result):
