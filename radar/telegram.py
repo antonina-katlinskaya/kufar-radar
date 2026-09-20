@@ -8,7 +8,12 @@ class Telegram:
     def get_updates(self,offset=None):
         p={'timeout':0,'allowed_updates':['message','callback_query']}
         if offset is not None: p['offset']=offset
-        return httpx.get(self.base+'/getUpdates',params=p,timeout=30).json().get('result',[])
+        r=httpx.get(self.base+'/getUpdates',params=p,timeout=30)
+        r.raise_for_status()
+        data=r.json()
+        if not data.get('ok'):
+            raise RuntimeError(f"Telegram getUpdates failed: {data.get('description')}")
+        return data.get('result',[])
     def send(self,chat_id,text,keyboard=None):
         payload={'chat_id':chat_id,'text':text,'disable_web_page_preview':True}
         if keyboard: payload['reply_markup']={'inline_keyboard':keyboard}
