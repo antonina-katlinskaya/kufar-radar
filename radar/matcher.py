@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 import re
 from .models import KufarListing, BirListing
 
@@ -32,13 +33,53 @@ def price_matches(k,b,tol=1.0):
     prices=[p for p in (b.price_fast_eur,b.price_regular_eur) if p is not None]
     return any(abs(k-p)<=tol for p in prices)
 
+def _kufar_coords(k):
+    rows=(k.raw or {}).get('ad_parameters')
+    if isinstance(rows,list):
+        for p in rows:
+            if isinstance(p,dict) and p.get('p')=='coordinates':
+                v=p.get('v')
+                if isinstance(v,list) and len(v)>=2:
+                    try: return float(v[1]),float(v[0])
+                    except: return None
+    if isinstance(rows,dict):
+        p=rows.get('coordinates') or {}
+        v=p.get('v') if isinstance(p,dict) else None
+        if isinstance(v,list) and len(v)>=2:
+            try: return float(v[1]),float(v[0])
+            except: return None
+    return None
+
+def _bir_coords(b):
+    v=(b.raw or {}).get('gps')
+    if not v: return None
+    try:
+        a=[float(x.strip()) for x in str(v).split(',')]
+        return (a[0],a[1]) if len(a)>=2 else None
+    except: return None
+
+def _distance_m(a,b):
+    if not a or not b: return None
+    lat1,lon1=a; lat2,lon2=b
+    p1,p2=math.radians(lat1),math.radians(lat2)
+    dp=math.radians(lat2-lat1); dl=math.radians(lon2-lon1)
+    h=math.sin(dp/2)**2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return 6371000*2*math.asin(min(1,math.sqrt(h)))
+
+def location_close(k,b,tol_m=250):
+    d=_distance_m(_kufar_coords(k),_bir_coords(b))
+    return None if d is None else d<=tol_m
+
 def vector(k,b):
+    addr = None if not k.address or not b.official_address else address_equal(k.address,b.official_address)
+    loc = None if b.official_address else location_close(k,b)
     return {
       'price': None if k.price_eur is None else price_matches(k.price_eur,b),
       'area': None if k.area is None or b.area is None else area_close(k.area,b.area),
       'rooms': None if k.rooms is None or b.rooms is None else k.rooms==b.rooms,
       'floor': None if k.floor is None or b.floor is None else k.floor==b.floor,
-      'address': None if not k.address or not b.official_address else address_equal(k.address,b.official_address),
+      'address': addr,
+      'location': loc,
     }
 
 def mismatch_map(k,b):
