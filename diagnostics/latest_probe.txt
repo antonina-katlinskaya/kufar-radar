@@ -1,5 +1,24 @@
-page1 200 total 1915 len 45 first 1085820441 next eyJ0IjoiYWJzIiwiZiI6dHJ1ZSwicCI6MiwicGl0IjoiMjk4MzE2NzgifQ==
-cursor status 200 len 45 first 1085789130 same_as_page1 False pagination {'pages': [{'label': 'prev', 'num': 1, 'token': 'eyJ0IjoiYWJzIiwiZiI6dHJ1ZSwicCI6MX0='}, {'label': 'self', 'num': 2, 'token': None}, {'label': 'next', 'num': 3, 'token': 'eyJ0IjoiYWJzIiwiZiI6dHJ1ZSwicCI6MywicGl0IjoiMjk4MzE2NzgifQ=='}, {'label': '', 'num': 4, 'token': 'eyJ0IjoiYWJzIiwiZiI6dHJ1ZSwicCI6NCwicGl0IjoiMjk4MzE2NzgifQ=='}, {'label': '', 'num': 5, 'token': 'eyJ0IjoiYWJzIiwiZiI6dHJ1ZSwicCI6NSwicGl0IjoiMjk4MzE2NzgifQ=='}]}
-token status 422 len 0 first None same_as_page1 None pagination None
-page status 422 len 0 first None same_as_page1 None pagination None
-cursor_token status 422 len 0 first None same_as_page1 None pagination None
+=== KUFAR FULL MANAGER ===
+alena_count 1833
+mw_claimed_count 502
+target_present True
+target {'id': '1085587936', 'eur': 113517.0, 'area': 63.1, 'rooms': 4, 'floor': 10, 'address': 'Жореса Алфёрова ул, 4, Минск', 'title': 'Топ-локация у метро Кредит Выгодно. Звоните 24/7'}
+sample
+{'id': '1085820441', 'eur': 43669.0, 'area': 30.4, 'rooms': 1, 'floor': 2, 'address': 'Игоря Лученка ул, 22, Минск', 'mw': False}
+{'id': '1085819851', 'eur': 39471.0, 'area': 28.5, 'rooms': 1, 'floor': 11, 'address': 'Игоря Лученка ул, 22, Минск', 'mw': True}
+{'id': '1085809888', 'eur': 43669.0, 'area': 30.4, 'rooms': 1, 'floor': 2, 'address': 'Игоря Лученка ул, 22, Минск', 'mw': True}
+{'id': '1085806664', 'eur': 59117.0, 'area': 45.3, 'rooms': 1, 'floor': 9, 'address': 'Братская ул, Минск', 'mw': True}
+{'id': '1085806290', 'eur': 59117.0, 'area': 45.3, 'rooms': 1, 'floor': 4, 'address': 'Николы Теслы ул, Минск', 'mw': True}
+{'id': '1085806228', 'eur': 59117.0, 'area': 45.3, 'rooms': 1, 'floor': 6, 'address': 'Николы Теслы ул, 33, Минск', 'mw': True}
+{'id': '1085806048', 'eur': 58777.0, 'area': 45.0, 'rooms': 1, 'floor': 6, 'address': 'Николы Теслы ул, 33, Минск', 'mw': True}
+{'id': '1085805345', 'eur': 49073.49, 'area': 48.5, 'rooms': 1, 'floor': 12, 'address': 'Николы Теслы ул, 33, Минск', 'mw': False}
+{'id': '1085805167', 'eur': 56297.0, 'area': 37.7, 'rooms': 1, 'floor': 12, 'address': 'Николы Теслы ул, Минск', 'mw': True}
+{'id': '1085805085', 'eur': 52522.0, 'area': 37.7, 'rooms': 1, 'floor': 12, 'address': 'Николы Теслы ул, 33, Минск', 'mw': False}
+{'id': '1085804520', 'eur': 52873.0, 'area': 61.8, 'rooms': 1, 'floor': 3, 'address': 'Брилевская ул, 54, Минск', 'mw': True}
+{'id': '1085804235', 'eur': 56507.0, 'area': 66.1, 'rooms': 1, 'floor': 3, 'address': 'квартал Западный, экспериментальный многофункциональный комплекс Минск-Мир, Минск', 'mw': True}
+pages 43 last [('https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated?atid=11093294&lang=ru&size=45&typ=sell&prn=1000&sort=lst.d&cursor=eyJ0IjoicmVsIiwiYyI6W3sibiI6Imxpc3RfdGltZSIsInYiOjE3ODM4NDMwNDkwMDB9LHsibiI6ImFkX2lkIiwidiI6MTA3Njc1OTc4N31dLCJmIjp0cnVlLCJwIjo0MX0%3D', 'GET', 200, 'application/json; charset=utf-8', 'page=41;ads=45;total_seen=1810;api_total=1915'), ('https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated?atid=11093294&lang=ru&size=45&typ=sell&prn=1000&sort=lst.d&cursor=eyJ0IjoicmVsIiwiYyI6W3sibiI6Imxpc3RfdGltZSIsInYiOjE3ODM2NjM0MzYwMDB9LHsibiI6ImFkX2lkIiwidiI6MTA3NjUwMTg5NH1dLCJmIjp0cnVlLCJwIjo0Mn0%3D', 'GET', 200, 'application/json; charset=utf-8', 'page=42;ads=45;total_seen=1855;api_total=1915'), ('https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated?atid=11093294&lang=ru&size=45&typ=sell&prn=1000&sort=lst.d&cursor=eyJ0IjoicmVsIiwiYyI6W3sibiI6Imxpc3RfdGltZSIsInYiOjE3ODM1MDA0NzEwMDB9LHsibiI6ImFkX2lkIiwidiI6MTA3NjI1Mzk0NX1dLCJmIjp0cnVlLCJwIjo0M30%3D', 'GET', 200, 'application/json; charset=utf-8', 'page=43;ads=45;total_seen=1900;api_total=1915')]
+=== BIR ===
+bir_count 1670
+rooms {1: 1338, 2: 99, 3: 62, 4: 5, 5: 0}
+target_like []
+bir_diag [('https://bir.by/ajax/get-search-objects-new/', 'POST', 200, 'text/html; charset=UTF-8', 'room=1-room;len=3379768'), ('https://bir.by/ajax/get-search-objects-new/', 'POST', 200, 'text/html; charset=UTF-8', 'room=2-room;len=247537'), ('https://bir.by/ajax/get-search-objects-new/', 'POST', 200, 'text/html; charset=UTF-8', 'room=3-room;len=153998'), ('https://bir.by/ajax/get-search-objects-new/', 'POST', 200, 'text/html; charset=UTF-8', 'room=4-room;len=12451'), ('https://bir.by/ajax/get-search-objects-new/', 'POST', 200, 'text/html; charset=UTF-8', 'room=5-room;len=0'), ('https://bir.by/ajax/get-search-objects-new/', 'POST', 200, 'text/html; charset=UTF-8', 'all;len=3801888')]
