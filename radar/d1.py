@@ -17,7 +17,8 @@ class D1:
     def _post(self, body):
         with httpx.Client(timeout=60) as c:
             r = c.post(self.url, headers=self.headers, json=body)
-            r.raise_for_status()
+            if r.status_code >= 400:
+                raise RuntimeError(f'D1 API error {r.status_code}: {r.text[:1500]}')
             data = r.json()
         if not data.get('success'):
             raise RuntimeError(f'D1 error: {data.get("errors")}')
