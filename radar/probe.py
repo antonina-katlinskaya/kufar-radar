@@ -1,5 +1,6 @@
 import asyncio
-from radar.collectors.kufar import KufarCollector
+from collections import Counter
+from radar.collectors.kufar import KufarCollector, is_mw_claimed
 from radar.collectors.bir import BirCollector
 from radar.matcher import match_new
 
@@ -8,22 +9,35 @@ TARGETS=['1085587936','1085820441','1085809888']
 async def main():
     k=KufarCollector(); ks=await k.collect()
     b=BirCollector(); bs=await b.collect()
-    print('counts',len(ks),len(bs))
+    print('kufar_alena',len(ks))
+    print('kufar_mw_claimed',sum(is_mw_claimed(x) for x in ks))
+    print('bir',len(bs),'bir_with_address',sum(bool(x.official_address) for x in bs))
+    print('kufar_last_diag',k.diagnostics[-10:])
+
     byid={x.ad_id:x for x in ks}
+    print('\nTARGETS')
     for aid in TARGETS:
         x=byid.get(aid)
-        print('\nTARGET',aid, x)
-        if not x: continue
+        if not x:
+            print(aid,'MISSING'); continue
         r=match_new(x,bs)
-        print('MATCH',r.confidence,r.reason,r.obj)
-        print('MISMATCHES',r.mismatches)
-        same_room_floor=[o for o in bs if o.rooms==x.rooms and o.floor==x.floor]
-        same_room_floor.sort(key=lambda o:(abs((o.area or 9999)-(x.area or 0)), min(abs((o.price_fast_eur or 1e9)-(x.price_eur or 0)),abs((o.price_regular_eur or 1e9)-(x.price_eur or 0)))))
-        print('NEAREST')
-        for o in same_room_floor[:15]:
-            print({'building':o.building_name,'unit':o.unit_no,'reg':o.price_regular_eur,'fast':o.price_fast_eur,'area':o.area,'rooms':o.rooms,'floor':o.floor,'cells':o.raw.get('cells'),'row_html':(o.raw.get('row_html') or '')[:1000]})
-    print('\nALL 4-ROOM')
-    for o in [x for x in bs if x.rooms==4]:
-        print({'building':o.building_name,'unit':o.unit_no,'reg':o.price_regular_eur,'fast':o.price_fast_eur,'area':o.area,'floor':o.floor,'cells':o.raw.get('cells'),'html':(o.raw.get('row_html') or '')[:1200]})
+        print(aid,{
+          'kufar':{'eur':x.price_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor,'address':x.address,'mw':is_mw_claimed(x)},
+          'result':r.confidence,'reason':r.reason,
+          'bir':None if not r.obj else {'key':r.obj.object_key,'building':r.obj.building_name,'address':r.obj.official_address,'unit':r.obj.unit_no,'reg':r.obj.price_regular_eur,'fast':r.obj.price_fast_eur,'area':r.obj.area,'rooms':r.obj.rooms,'floor':r.obj.floor},
+          'mismatches':r.mismatches
+        })
+
+    print('\nDRY AUDIT MW-CLAIMED')
+    stats=Counter(); anomalies=[]
+    for x in [a for a in ks if is_mw_claimed(a)]:
+        r=match_new(x,bs)
+        stats[r.confidence]+=1
+        if r.obj and r.mismatches:
+            anomalies.append((x,r))
+    print('stats',dict(stats))
+    print('matched_with_mismatches',len(anomalies))
+    for x,r in anomalies[:30]:
+        print({'id':x.ad_id,'k':{'eur':x.price_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor,'address':x.address},'confidence':r.confidence,'bir':{'building':r.obj.building_name,'address':r.obj.official_address,'unit':r.obj.unit_no,'reg':r.obj.price_regular_eur,'fast':r.obj.price_fast_eur,'area':r.obj.area,'rooms':r.obj.rooms,'floor':r.obj.floor},'mismatches':r.mismatches})
 
 if __name__=='__main__': asyncio.run(main())
