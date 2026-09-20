@@ -1,6 +1,6 @@
 import json
 from .matcher import match_new
-from .store import fp, now, current_bir
+from .store import fp, now, current_bir, inactive_bir
 from .collectors.kufar import is_mw_claimed
 from .config import settings
 
@@ -8,6 +8,7 @@ class AuditSession:
     def __init__(self, db):
         self.db=db
         self.candidates=current_bir(db)
+        self.inactive_candidates=inactive_bir(db)
         self.active={}
         for r in db.query('SELECT * FROM events WHERE active=1 AND occurred_at >= ?',[settings.live_cutoff_utc]):
             self.active.setdefault(r['ad_id'],{})[r['field_name']]=r
@@ -42,14 +43,19 @@ class AuditSession:
         if r.confidence=='AMBIGUOUS':
             return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':r.reason,'mismatches':{}}
 
-        # Only call "not on Bir" when the Kufar card itself has enough identity fields.
-        # This avoids turning a parsing failure into an alert.
+        # If there is no current Bir match, look in previously seen Bir inventory.
+        # This lets the alert name the historical unit and its last known appearance.
+        historical=match_new(k,self.inactive_candidates)
+        if historical.confidence=='AMBIGUOUS':
+            return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':'Historical Bir match is ambiguous','mismatches':{}}
+
         known=sum(v is not None and v!='' for v in [k.price_eur,k.area,k.rooms,k.floor,k.address])
         if known>=4:
             return {
               'status':'NO_BIR_OBJECT',
               'ad_id':k.ad_id,
-              'reason':r.reason,
+              'object_key':historical.obj.object_key if historical.obj and historical.confidence in {'EXACT','HIGH'} else None,
+              'reason':historical.reason if historical.obj else r.reason,
               'mismatches':{'existence':('active Kufar','no matching current Bir object')}
             }
 
