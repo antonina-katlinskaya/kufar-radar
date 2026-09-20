@@ -2,6 +2,11 @@ name: Radar
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+  push:
+    paths:
+      - '.radar-trigger'
 
 permissions:
   contents: read
