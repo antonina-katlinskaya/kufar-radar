@@ -1,24 +1,90 @@
-import asyncio, os, tempfile
+import asyncio, json
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from .config import settings
 from .d1 import D1
 from .telegram import Telegram
-from .collectors.kufar import KufarCollector, screenshot_ad
+from .collectors.kufar import KufarCollector
 from .collectors.bir import BirCollector
-from .store import save_kufar, save_bir, current_kufar
+from .store import save_kufar, save_bir
 from .audit import AuditSession
 
-KEYBOARD=[[{'text':'🔎 Проверить сейчас','callback_data':'check_now'}],[{'text':'🚨 Нарушения сейчас','callback_data':'violations'}]]
+MINSK=ZoneInfo('Europe/Minsk')
+KEYBOARD=[
+  [{'text':'🔎 Проверить сейчас','callback_data':'check_now'}],
+  [{'text':'📋 Актуальное состояние','callback_data':'state_now'}]
+]
 
-def fmt_event(e,k=None):
-    names={'price':'цена','area':'площадь','rooms':'комнаты','floor':'этаж','address':'адрес','existence':'актуальность объекта'}
-    icon='✅' if e['event_type']=='RESTORED' else '🚨'
-    title={'NEW_MISMATCH':'Новое расхождение','REPEAT':'Повторное расхождение','RESTORED':'Исправлено','STALE':'Объект исчез с Bir','NO_BIR_OBJECT':'Объект не найден на Bir'}.get(e['event_type'],e['event_type'])
-    s=f"{icon} {title}\nID: {e['ad_id']}\nПоле: {names.get(e['field_name'],e['field_name'])}"
-    if e.get('new_value') is not None: s+=f"\nKufar: {e['new_value']}"
-    if e.get('bir_value') is not None: s+=f"\nBir: {e['bir_value']}"
-    if k and k.url: s+=f"\n{k.url}"
-    return s
+TITLES={
+  'price':'Цена на Kufar не совпадает с Bir',
+  'area':'Расхождение по площади между Kufar и Bir',
+  'rooms':'Расхождение по количеству комнат между Kufar и Bir',
+  'floor':'Расхождение по этажу между Kufar и Bir',
+  'address':'Расхождение по адресу между Kufar и Bir',
+  'existence':'Объявление на Kufar не соответствует наличию на Bir',
+}
+
+def fmt_num(v, decimals=2):
+    if v is None: return '—'
+    try:
+        n=float(v)
+        s=f'{n:,.{decimals}f}'.replace(',',' ').replace('.',',')
+        return s.rstrip('0').rstrip(',')
+    except: return str(v)
+
+def fmt_eur(v):
+    if v is None: return '—'
+    try: return f"{float(v):,.0f}".replace(',',' ')+' €'
+    except: return str(v)
+
+def fmt_rooms(v):
+    try: return str(int(float(v)))
+    except: return str(v) if v is not None else '—'
+
+def event_context(db,e,k):
+    b={}
+    key=e.get('object_key')
+    if key:
+        rows=db.query('SELECT * FROM bir_objects WHERE object_key=? LIMIT 1',[key])
+        if rows: b=rows[0]
+    building=b.get('building_name')
+    address=k.address or b.get('official_address')
+    return b,building,address
+
+def fmt_event(db,e,k):
+    field=e['field_name']; b,building,address=event_context(db,e,k)
+    parts=[f"🚨 {TITLES.get(field,'Расхождение между Kufar и Bir')}"]
+    if building: parts.append(f"Дом: {building}")
+    if address: parts.append(f"Адрес: {address}")
+
+    specs=[]
+    if k.rooms is not None: specs.append(f"{fmt_rooms(k.rooms)}-комн.")
+    if k.area is not None: specs.append(f"{fmt_num(k.area)} м²")
+    if k.floor is not None: specs.append(f"{fmt_rooms(k.floor)} этаж")
+    if specs: parts.append("Квартира: "+", ".join(specs))
+
+    if field=='price':
+        try: bv=json.loads(e.get('bir_value') or '{}')
+        except: bv={}
+        parts += [
+          '',
+          f"Kufar: {fmt_eur(e.get('new_value'))}",
+          f"Bir: {fmt_eur(bv.get('regular'))}",
+          f"Спеццена Bir: {fmt_eur(bv.get('fast'))}",
+        ]
+    elif field=='area':
+        parts += ['',f"Kufar: {fmt_num(e.get('new_value'))} м²",f"Bir: {fmt_num(e.get('bir_value'))} м²"]
+    elif field=='rooms':
+        parts += ['',f"Kufar: {fmt_rooms(e.get('new_value'))} комн.",f"Bir: {fmt_rooms(e.get('bir_value'))} комн."]
+    elif field=='floor':
+        parts += ['',f"Kufar: {fmt_rooms(e.get('new_value'))} этаж",f"Bir: {fmt_rooms(e.get('bir_value'))} этаж"]
+    elif field=='address':
+        parts += ['',f"Kufar: {e.get('new_value') or '—'}",f"Bir: {e.get('bir_value') or '—'}"]
+    elif field=='existence':
+        parts += ['','На момент проверки соответствующий объект на Bir не найден.']
+
+    if k.url: parts += ['',k.url]
+    return '\n'.join(parts)
 
 def save_diag(db,source,diag):
     ts=datetime.now(timezone.utc).isoformat(); stm=[]; seen=set()
@@ -32,8 +98,7 @@ def save_diag(db,source,diag):
         if key in seen: continue
         seen.add(key)
         stm.append(('INSERT INTO source_diagnostics(source,observed_at,url,method,status,content_type,note) VALUES(?,?,?,?,?,?,?)',[source,ts,url,method,status,ct,note]))
-    for i in range(0,len(stm),75):
-        db.batch(stm[i:i+75])
+    for i in range(0,len(stm),75): db.batch(stm[i:i+75])
 
 def parse_ts(v):
     try: return datetime.fromisoformat(v.replace('Z','+00:00'))
@@ -57,6 +122,14 @@ async def collect_kufar(db):
     db.set_state('last_kufar_count',str(len(items)))
     return items,changed
 
+def close_inactive_ad_events(db):
+    ts=datetime.now(timezone.utc).isoformat()
+    db.execute(
+      'UPDATE events SET active=0,resolved_at=? WHERE active=1 '
+      'AND ad_id IN (SELECT ad_id FROM kufar_ads WHERE active=0)',
+      [ts]
+    )
+
 def active_event_count(db):
     rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1')
     return int(rows[0]['n']) if rows else 0
@@ -73,79 +146,127 @@ def process_updates(db,tg):
                 db.set_state('telegram_chat_id',cid); allowed=cid
             if cid!=allowed: continue
             if txt.startswith('/start'):
-                tg.send(cid,f"Радар подключён. Сейчас активных зафиксированных расхождений: {active_event_count(db)}.",KEYBOARD)
-            elif txt.startswith('/check'): force=True
-            elif txt.startswith('/violations'): show=True
+                tg.send(cid,'Радар подключён. Новые и изменённые объявления будут проверяться автоматически.',KEYBOARD)
+            elif txt.startswith('/check'):
+                force=True
+            elif txt.startswith('/state') or txt.startswith('/violations'):
+                show=True
         elif 'callback_query' in u:
             q=u['callback_query']; cid=str(q['message']['chat']['id']); allowed=db.get_state('telegram_chat_id')
             if cid!=allowed: continue
             tg.answer_callback(q['id'])
             if q.get('data')=='check_now': force=True
-            if q.get('data')=='violations': show=True
+            if q.get('data') in {'state_now','violations'}: show=True
     db.set_state('telegram_offset',str(offset))
     return force,show
 
-def show_violations(db,tg,chat):
-    total=active_event_count(db)
-    rows=db.query('SELECT e.*, k.url FROM events e LEFT JOIN kufar_ads k ON k.ad_id=e.ad_id WHERE e.active=1 ORDER BY e.occurred_at DESC LIMIT 40')
+def summary_rows(db):
+    return db.query(
+      '''SELECT e.*, k.url, k.address, k.area, k.rooms, k.floor,
+                b.building_name, b.official_address
+         FROM events e
+         JOIN kufar_ads k ON k.ad_id=e.ad_id
+         LEFT JOIN bir_objects b ON b.object_key=e.object_key
+         WHERE e.active=1 AND k.active=1
+         ORDER BY e.occurred_at DESC
+         LIMIT 250'''
+    )
+
+def summary_line(r):
+    building=r.get('building_name')
+    address=r.get('address') or r.get('official_address')
+    bits=[]
+    if building: bits.append(str(building))
+    if address and (not building or address.casefold() not in str(building).casefold()): bits.append(str(address))
+    if r.get('rooms') is not None: bits.append(f"{fmt_rooms(r.get('rooms'))}-комн.")
+    if r.get('area') is not None: bits.append(f"{fmt_num(r.get('area'))} м²")
+    if r.get('floor') is not None: bits.append(f"{fmt_rooms(r.get('floor'))} эт.")
+    label=', '.join(bits) if bits else 'Объявление'
+    return f"• {label}\n  {r.get('url') or ''}".rstrip()
+
+def send_state_summary(db,tg,chat,keyboard=True):
+    rows=summary_rows(db)
+    title='📋 Актуальное состояние объявлений на Kufar'
     if not rows:
-        tg.send(chat,'Сейчас активных расхождений не зафиксировано.',KEYBOARD); return
-    parts=[f"🚨 Активных расхождений: {total}"]
-    for r in rows[:25]:
-        parts.append(f"• {r['ad_id']} — {r['field_name']}: {r.get('new_value')} / Bir {r.get('bir_value')}")
-    if total>25: parts.append(f"…и ещё {total-25}")
-    tg.send(chat,'\n'.join(parts),KEYBOARD)
+        tg.send(chat,title+'\n\nРасхождений, требующих внимания, сейчас нет.',KEYBOARD if keyboard else None)
+        return
+
+    grouped={}
+    for r in rows: grouped.setdefault(r['field_name'],[]).append(r)
+    total=len(rows)
+    first=True
+    order=['price','area','rooms','floor','address','existence']
+    for field in order:
+        group=grouped.get(field) or []
+        if not group: continue
+        header=(title+f"\n\nВсего требуют внимания: {total}\n\n" if first else '')+f"{TITLES.get(field,field)} — {len(group)}"
+        first=False
+        chunks=[]; cur=header
+        for r in group:
+            line='\n\n'+summary_line(r)
+            if len(cur)+len(line)>3600:
+                chunks.append(cur); cur=f"{TITLES.get(field,field)} — продолжение"+line
+            else:
+                cur+=line
+        chunks.append(cur)
+        for i,msg in enumerate(chunks):
+            tg.send(chat,msg,KEYBOARD if keyboard and field==order[-1] and i==len(chunks)-1 else None)
+
+    # If the last predefined category was absent, ensure controls are still easy to reach.
+    if keyboard:
+        tg.send(chat,'Управление радаром:',KEYBOARD)
+
+def should_live_notify(local_now):
+    return 8 <= local_now.hour < 21
+
+def should_send_morning_summary(db,local_now):
+    if not (8 <= local_now.hour < 9): return False
+    today=local_now.date().isoformat()
+    return db.get_state('morning_summary_date','') != today
 
 async def run():
     db=D1(); tg=Telegram()
     force,show=process_updates(db,tg)
     chat=db.get_state('telegram_chat_id')
-    if show and chat: show_violations(db,tg,chat)
 
-    # Two baseline passes must use two fresh Bir snapshots; otherwise an object missing in one
-    # snapshot could be incorrectly confirmed from the same cached snapshot five minutes later.
-    baseline_runs=int(db.get_state('baseline_runs','0') or 0)
-    baseline_mode=baseline_runs<2
-    bir_changed=await collect_bir(db,force=(force or baseline_mode))
+    bir_changed=await collect_bir(db,force=force)
     items,changed=await collect_kufar(db)
-    print(f"RADAR_INPUT baseline={baseline_runs}/2 bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)}")
+    close_inactive_ad_events(db)
+    print(f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)}")
 
-    # Baseline audits are intentionally silent. They establish history and satisfy the
-    # two-independent-snapshot rule for NO_BIR_OBJECT without flooding Telegram.
-    targets=current_kufar(db,settings.kufar_profile_id) if (force or bir_changed or baseline_mode) else changed
-
+    # Core rule: only a NEW or EDITED Kufar card is audited.
+    targets=changed
     session=AuditSession(db)
     all_new=[]
-    by_id={x.ad_id:x for x in items}
     for k in targets:
         r=session.audit(k)
         for e in session.sync(k,r):
             all_new.append((e,k))
     statements=session.flush()
-
-    if baseline_mode:
-        baseline_runs+=1
-        db.set_state('baseline_runs',str(baseline_runs))
-        print(f"RADAR_BASELINE completed_pass={baseline_runs}/2 active_events={active_event_count(db)} statements={statements}")
-        if baseline_runs>=2:
-            db.set_state('baseline_complete','1')
-            if chat:
-                tg.send(chat,f"✅ Базовая фиксация завершена. Проверено объявлений Алёны: {len(items)}. Активных расхождений в базе: {active_event_count(db)}. Новые изменения дальше будут приходить автоматически.",KEYBOARD)
-        elif chat:
-            tg.send(chat,f"Базовая фиксация 1/2 завершена. Получено объявлений Алёны: {len(items)}. Индивидуальные уведомления пока подавлены.",KEYBOARD)
-        return
-
     print(f"RADAR_RESULT targets={len(targets)} new_events={len(all_new)} active_events={active_event_count(db)} statements={statements}")
-    if chat:
+
+    local_now=datetime.now(MINSK)
+    morning=False
+    if chat and should_send_morning_summary(db,local_now):
+        send_state_summary(db,tg,chat,keyboard=True)
+        db.set_state('morning_summary_date',local_now.date().isoformat())
+        morning=True
+
+    if chat and should_live_notify(local_now) and not morning:
+        # Deliberately send one clean Telegram card per discrepancy.
         for e,k in all_new:
-            tg.send(chat,fmt_event(e,k),KEYBOARD)
-            if settings.send_screenshots and e['event_type'] in {'NEW_MISMATCH','REPEAT','STALE','NO_BIR_OBJECT'} and k.url:
-                path=os.path.join(tempfile.gettempdir(),f"kufar_{k.ad_id}.png")
-                if await screenshot_ad(k.url,path):
-                    try: tg.photo(chat,path,f"Фиксация Kufar {k.ad_id}")
-                    except: pass
-        if force:
-            tg.send(chat,f"✅ Полная проверка завершена. Объявлений Алёны: {len(items)}. Активных расхождений: {active_event_count(db)}.",KEYBOARD)
+            tg.send(chat,fmt_event(db,e,k))
+
+    if chat and show:
+        send_state_summary(db,tg,chat,keyboard=True)
+
+    if chat and force:
+        tg.send(
+          chat,
+          f"✅ Проверка завершена. Новых/изменённых объявлений: {len(changed)}. "
+          f"Сейчас требуют внимания: {active_event_count(db)}.",
+          KEYBOARD
+        )
 
 if __name__=='__main__':
     asyncio.run(run())
