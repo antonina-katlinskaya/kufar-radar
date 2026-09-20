@@ -1,22 +1,28 @@
 import asyncio
-import httpx
-from radar.config import settings
+from radar.collectors.kufar import KufarCollector, contact_person, is_mw_claimed
+from radar.collectors.bir import BirCollector
 
-URL='https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated'
-BASE={'atid':settings.kufar_profile_id,'lang':'ru','size':'45','typ':'sell','prn':'1000','sort':'lst.d'}
+TARGET='1085587936'
 
 async def main():
-    async with httpx.AsyncClient(timeout=45,follow_redirects=True,headers={'User-Agent':'Mozilla/5.0'}) as c:
-        r=await c.get(URL,params=BASE); d=r.json()
-        first=d['ads'][0]['ad_id']; token=next(p['token'] for p in d['pagination']['pages'] if p.get('label')=='next')
-        print('page1',r.status_code,'total',d.get('total'),'len',len(d.get('ads',[])),'first',first,'next',token)
-        for key in ['cursor','token','page','cursor_token']:
-            params=dict(BASE); params[key]=token if key!='page' else '2'
-            rr=await c.get(URL,params=params)
-            try: dd=rr.json()
-            except: print(key,'nonjson',rr.status_code,rr.text[:300]); continue
-            ads=dd.get('ads') or []
-            print(key,'status',rr.status_code,'len',len(ads),'first',ads[0]['ad_id'] if ads else None,'same_as_page1',(ads[0]['ad_id']==first if ads else None),'pagination',dd.get('pagination'))
+    print('=== KUFAR FULL MANAGER ===')
+    k=KufarCollector(); items=await k.collect()
+    print('alena_count',len(items))
+    print('mw_claimed_count',sum(1 for x in items if is_mw_claimed(x)))
+    print('target_present',any(x.ad_id==TARGET for x in items))
+    target=next((x for x in items if x.ad_id==TARGET),None)
+    if target:
+        print('target',{'id':target.ad_id,'eur':target.price_eur,'area':target.area,'rooms':target.rooms,'floor':target.floor,'address':target.address,'title':target.title})
+    print('sample')
+    for x in items[:12]:
+        print({'id':x.ad_id,'eur':x.price_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor,'address':x.address,'mw':is_mw_claimed(x)})
+    print('pages',len(k.diagnostics),'last',k.diagnostics[-3:])
 
-if __name__=='__main__':
-    asyncio.run(main())
+    print('=== BIR ===')
+    b=BirCollector(); items2=await b.collect()
+    print('bir_count',len(items2))
+    print('rooms',{n:sum(1 for x in items2 if x.rooms==n) for n in range(1,6)})
+    print('target_like',[{'building':x.building_name,'unit':x.unit_no,'reg':x.price_regular_eur,'fast':x.price_fast_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor} for x in items2 if x.rooms==1 and x.floor==2 and x.area is not None and 30.30<=x.area<=30.50 and (x.price_fast_eur==43669 or x.price_regular_eur==43669)][:20])
+    print('bir_diag',b.diagnostics)
+
+if __name__=='__main__': asyncio.run(main())
