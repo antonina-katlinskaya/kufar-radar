@@ -33,5 +33,5 @@ jobs:
           CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
           CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
           HEADLESS: '1'
-          SEND_SCREENSHOTS: '1'
+          SEND_SCREENSHOTS: '0'
         run: python -m radar.main
