@@ -102,13 +102,15 @@ async def run():
     chat=db.get_state('telegram_chat_id')
     if show and chat: show_violations(db,tg,chat)
 
-    bir_changed=await collect_bir(db,force=force)
-    items,changed=await collect_kufar(db)
-
-    # Two complete baseline audits are intentionally silent. This both establishes the history
-    # and satisfies the two-snapshot rule for NO_BIR_OBJECT without flooding Telegram.
+    # Two baseline passes must use two fresh Bir snapshots; otherwise an object missing in one
+    # snapshot could be incorrectly confirmed from the same cached snapshot five minutes later.
     baseline_runs=int(db.get_state('baseline_runs','0') or 0)
     baseline_mode=baseline_runs<2
+    bir_changed=await collect_bir(db,force=(force or baseline_mode))
+    items,changed=await collect_kufar(db)
+
+    # Baseline audits are intentionally silent. They establish history and satisfy the
+    # two-independent-snapshot rule for NO_BIR_OBJECT without flooding Telegram.
     targets=current_kufar(db,settings.kufar_profile_id) if (force or bir_changed or baseline_mode) else changed
 
     session=AuditSession(db)
