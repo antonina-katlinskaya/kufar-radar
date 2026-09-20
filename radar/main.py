@@ -108,6 +108,7 @@ async def run():
     baseline_mode=baseline_runs<2
     bir_changed=await collect_bir(db,force=(force or baseline_mode))
     items,changed=await collect_kufar(db)
+    print(f"RADAR_INPUT baseline={baseline_runs}/2 bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)}")
 
     # Baseline audits are intentionally silent. They establish history and satisfy the
     # two-independent-snapshot rule for NO_BIR_OBJECT without flooding Telegram.
@@ -125,6 +126,7 @@ async def run():
     if baseline_mode:
         baseline_runs+=1
         db.set_state('baseline_runs',str(baseline_runs))
+        print(f"RADAR_BASELINE completed_pass={baseline_runs}/2 active_events={active_event_count(db)} statements={statements}")
         if baseline_runs>=2:
             db.set_state('baseline_complete','1')
             if chat:
@@ -133,6 +135,7 @@ async def run():
             tg.send(chat,f"Базовая фиксация 1/2 завершена. Получено объявлений Алёны: {len(items)}. Индивидуальные уведомления пока подавлены.",KEYBOARD)
         return
 
+    print(f"RADAR_RESULT targets={len(targets)} new_events={len(all_new)} active_events={active_event_count(db)} statements={statements}")
     if chat:
         for e,k in all_new:
             tg.send(chat,fmt_event(e,k),KEYBOARD)
