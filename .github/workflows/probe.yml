@@ -35,4 +35,5 @@ jobs:
           git config user.email github-actions@github.com
           git add diagnostics/latest_probe.txt
           git diff --cached --quiet || git commit -m "diagnostic: update latest source probe"
+          git pull --rebase origin main
           git push
