@@ -1,0 +1,39 @@
+name: Radar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kufar-bir-radar
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Run radar
+        env:
+          KUFAR_PROFILE_ID: '11093294'
+          KUFAR_PROFILE_URL: 'https://re.kufar.by/p/ooo-mezhdunarodnaya-rielterskaya-kompaniya-etazhi/11093294'
+          BIR_SEARCH_URL: 'https://bir.by/search-by-parameters/'
+          BIR_REFRESH_MINUTES: '15'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          HEADLESS: '1'
+          SEND_SCREENSHOTS: '1'
+        run: python -m radar.main
