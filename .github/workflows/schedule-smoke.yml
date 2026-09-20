@@ -1,0 +1,25 @@
+name: Schedule smoke
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+permissions:
+  contents: write
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record first scheduled run
+        if: github.event_name == 'schedule'
+        run: |
+          if [ -f .schedule-heartbeat ]; then
+            echo "Heartbeat already exists"
+            exit 0
+          fi
+          printf 'scheduled_at=%s\nevent=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GITHUB_EVENT_NAME" > .schedule-heartbeat
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .schedule-heartbeat
+          git commit -m "ops: confirm GitHub schedule heartbeat"
+          git push
