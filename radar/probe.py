@@ -1,43 +1,30 @@
-import asyncio
-from collections import Counter
-from radar.collectors.kufar import KufarCollector, is_mw_claimed
+import asyncio, re
+import httpx
 from radar.collectors.bir import BirCollector
-from radar.matcher import match_new
 
-TARGETS=['1085587936','1085820441','1085809888']
+BUILDINGS=['11.2','4.2','21.1','24.2.3']
 
 async def main():
-    k=KufarCollector(); ks=await k.collect()
     b=BirCollector(); bs=await b.collect()
-    print('kufar_alena',len(ks))
-    print('kufar_mw_claimed',sum(is_mw_claimed(x) for x in ks))
-    print('bir',len(bs),'bir_with_address',sum(bool(x.official_address) for x in bs))
-    print('kufar_last_diag',k.diagnostics[-10:])
-
-    byid={x.ad_id:x for x in ks}
-    print('\nTARGETS')
-    for aid in TARGETS:
-        x=byid.get(aid)
-        if not x:
-            print(aid,'MISSING'); continue
-        r=match_new(x,bs)
-        print(aid,{
-          'kufar':{'eur':x.price_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor,'address':x.address,'mw':is_mw_claimed(x)},
-          'result':r.confidence,'reason':r.reason,
-          'bir':None if not r.obj else {'key':r.obj.object_key,'building':r.obj.building_name,'address':r.obj.official_address,'unit':r.obj.unit_no,'reg':r.obj.price_regular_eur,'fast':r.obj.price_fast_eur,'area':r.obj.area,'rooms':r.obj.rooms,'floor':r.obj.floor},
-          'mismatches':r.mismatches
-        })
-
-    print('\nDRY AUDIT MW-CLAIMED')
-    stats=Counter(); anomalies=[]
-    for x in [a for a in ks if is_mw_claimed(a)]:
-        r=match_new(x,bs)
-        stats[r.confidence]+=1
-        if r.obj and r.mismatches:
-            anomalies.append((x,r))
-    print('stats',dict(stats))
-    print('matched_with_mismatches',len(anomalies))
-    for x,r in anomalies[:30]:
-        print({'id':x.ad_id,'k':{'eur':x.price_eur,'area':x.area,'rooms':x.rooms,'floor':x.floor,'address':x.address},'confidence':r.confidence,'bir':{'building':r.obj.building_name,'address':r.obj.official_address,'unit':r.obj.unit_no,'reg':r.obj.price_regular_eur,'fast':r.obj.price_fast_eur,'area':r.obj.area,'rooms':r.obj.rooms,'floor':r.obj.floor},'mismatches':r.mismatches})
+    print('objects',len(bs))
+    hrefs={}
+    for name in BUILDINGS:
+        xs=[x for x in bs if x.building_name==name]
+        print('\nBUILDING',name,'count',len(xs))
+        for x in xs[:2]:
+            print({'address':x.official_address,'href':x.raw.get('house_href'),'cells':x.raw.get('cells')})
+            if x.raw.get('house_href'): hrefs[name]=x.raw.get('house_href')
+    async with httpx.AsyncClient(timeout=40,follow_redirects=True,headers={'User-Agent':'Mozilla/5.0'}) as c:
+        for name,href in hrefs.items():
+            url='https://bir.by'+href if href.startswith('/') else 'https://bir.by/'+href.lstrip('/')
+            r=await c.get(url)
+            text=re.sub(r'<script[\s\S]*?</script>',' ',r.text,flags=re.I)
+            text=re.sub(r'<style[\s\S]*?</style>',' ',text,flags=re.I)
+            plain=re.sub(r'<[^>]+>',' ',text)
+            plain=' '.join(plain.replace('&nbsp;',' ').split())
+            print('\nPAGE',name,url,r.status_code,'title-ish',plain[:800])
+            for pat in ['улица','ул.','проспект','дом','Адрес','адрес']:
+                i=plain.find(pat)
+                if i>=0: print('CONTEXT',plain[max(0,i-300):i+800]); break
 
 if __name__=='__main__': asyncio.run(main())
