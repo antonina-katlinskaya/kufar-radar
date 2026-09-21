@@ -33,9 +33,20 @@ def round_area_1(v):
     except (InvalidOperation, ValueError, TypeError):
         return None
 
-def area_close(a,b):
-    aa,bb=round_area_1(a),round_area_1(b)
-    return aa is not None and bb is not None and aa==bb
+def _decimal_area(v):
+    if v is None: return None
+    try:
+        return Decimal(str(v))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+def area_close(kufar_area,bir_area):
+    """Accept an exact value or Kufar's HALF_UP rounding of the BIR source value."""
+    kufar=_decimal_area(kufar_area)
+    bir=_decimal_area(bir_area)
+    if kufar is None or bir is None:
+        return False
+    return kufar==bir or kufar==round_area_1(bir)
 
 def price_matches(k,b,tol=1.0):
     if k is None: return False
