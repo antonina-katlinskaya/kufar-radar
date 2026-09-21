@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import math
 import re
 from .models import KufarListing, BirListing
@@ -25,8 +26,16 @@ def address_equal(a,b):
     wa={x for x in aa if not x.isdigit()}; wb={x for x in bb if not x.isdigit()}
     return bool(wa and wb and (wa<=wb or wb<=wa or len(wa&wb)>=max(1,min(len(wa),len(wb))-1)))
 
-def area_close(a,b,tol=0.09):
-    return a is not None and b is not None and abs(a-b)<=tol
+def round_area_1(v):
+    if v is None: return None
+    try:
+        return Decimal(str(v)).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+def area_close(a,b):
+    aa,bb=round_area_1(a),round_area_1(b)
+    return aa is not None and bb is not None and aa==bb
 
 def price_matches(k,b,tol=1.0):
     if k is None: return False
@@ -86,7 +95,7 @@ def mismatch_map(k,b):
     out={}
     v=vector(k,b)
     if v['price'] is False: out['price']=(k.price_eur, {'fast':b.price_fast_eur,'regular':b.price_regular_eur})
-    if k.area is not None and b.area is not None and abs(k.area-b.area)>1e-9: out['area']=(k.area,b.area)
+    if v['area'] is False: out['area']=(k.area,b.area)
     if v['rooms'] is False: out['rooms']=(k.rooms,b.rooms)
     if v['floor'] is False: out['floor']=(k.floor,b.floor)
     if v['address'] is False: out['address']=(k.address,b.official_address or b.building_name)
