@@ -15,8 +15,6 @@ class AuditSession:
         self.statements=[]
 
     def audit(self,k):
-        # Every new/edited Kufar version is matched against the CURRENT Bir inventory.
-        # We deliberately do not keep monitoring an unchanged old ad merely because Bir changes later.
         r=match_new(k,self.candidates)
 
         if r.obj:
@@ -43,8 +41,6 @@ class AuditSession:
         if r.confidence=='AMBIGUOUS':
             return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':r.reason,'mismatches':{}}
 
-        # If there is no current Bir match, look in previously seen Bir inventory.
-        # This lets the alert name the historical unit and its last known appearance.
         historical=match_new(k,self.inactive_candidates)
         if historical.confidence=='AMBIGUOUS':
             return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':'Historical Bir match is ambiguous','mismatches':{}}
@@ -59,7 +55,6 @@ class AuditSession:
               'mismatches':{'existence':('active Kufar','no matching current Bir object')}
             }
 
-        # No confident historical apartment => do not turn uncertainty into an alert.
         return {'status':'INSUFFICIENT','ad_id':k.ad_id,'reason':'No confident current or historical Bir match','mismatches':{}}
 
     def sync(self,k,result):
@@ -74,7 +69,6 @@ class AuditSession:
         active=self.active.get(k.ad_id,{})
         new_events=[]
 
-        # If the seller edited the ad and the discrepancy disappeared, close it silently.
         for field,e in list(active.items()):
             if field not in desired:
                 self.statements.append(('UPDATE events SET active=0,resolved_at=? WHERE id=?',[ts,e['id']]))
@@ -95,12 +89,13 @@ class AuditSession:
             active[field]={
               'id':None,'ad_id':k.ad_id,'object_key':result.get('object_key'),
               'event_type':typ,'field_name':field,'new_value':nv,'bir_value':bv,
-              'signature':sig,'active':1
+              'signature':sig,'active':1,'occurred_at':ts
             }
             new_events.append({
               'event_type':typ,'field_name':field,'ad_id':k.ad_id,
               'old_value':cur.get('new_value') if cur else None,
-              'new_value':nv,'bir_value':bv,'object_key':result.get('object_key')
+              'new_value':nv,'bir_value':bv,'object_key':result.get('object_key'),
+              'occurred_at':ts
             })
 
         if active:
