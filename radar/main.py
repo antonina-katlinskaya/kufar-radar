@@ -293,6 +293,22 @@ def active_event_counts(db):
     )
     return {r['field_name']: int(r['n']) for r in rows}
 
+def log_recovery_events(db):
+    """Temporary read-only trace for two fresh events archived at the v3 cutover."""
+    rows=db.query(
+      '''SELECT e.id, e.ad_id, e.object_key, e.field_name, e.old_value,
+                e.new_value, e.bir_value, e.occurred_at, e.resolved_at,
+                k.url, k.address, k.area, k.rooms, k.floor,
+                b.building_name, b.official_address, b.unit_no
+         FROM events e
+         LEFT JOIN kufar_ads k ON k.ad_id=e.ad_id
+         LEFT JOIN bir_objects b ON b.object_key=e.object_key
+         WHERE e.occurred_at>=? AND e.occurred_at<?
+         ORDER BY e.occurred_at, e.id''',
+      ['2026-09-21T05:50:00+00:00','2026-09-21T06:05:00+00:00']
+    )
+    print('RECOVERY_EVENTS '+json.dumps(rows,ensure_ascii=False,default=str))
+
 def process_updates(db,tg):
     offset=int(db.get_state('telegram_offset','0') or 0); force=False; show=False
     ups=tg.get_updates(offset)
@@ -432,6 +448,7 @@ async def run():
     items,changed,previous_active=await collect_kufar(db)
     targets,selection_mode=choose_audit_targets(items,changed,previous_active)
     archived_legacy_events=archive_legacy_events_once(db)
+    log_recovery_events(db)
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
     print(
