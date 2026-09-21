@@ -13,9 +13,10 @@ from .audit import AuditSession
 from .matcher import area_close
 
 MINSK=ZoneInfo('Europe/Minsk')
-KEYBOARD=[
-  [{'text':'📋 Актуальное состояние','callback_data':'state_now'}]
-]
+CHECK_BUTTON='🔄 Проверить сейчас'
+STATE_BUTTON='📋 Показать расхождения'
+MAIN_KEYBOARD=[[CHECK_BUTTON,STATE_BUTTON]]
+KEYBOARD_STATE='telegram_main_keyboard_v1_sent'
 
 TITLES={
   'price':'Цена на Kufar не совпадает с BIR',
@@ -99,6 +100,13 @@ def kufar_card_time(raw):
 def telegram_html(text):
     escaped=html.escape(str(text),quote=False)
     return re.sub(r'\*\*(.+?)\*\*',r'<b>\1</b>',escaped)
+
+def bot_action(text):
+    value=(text or '').strip()
+    if value.startswith('/start'): return 'start'
+    if value.startswith('/check') or value==CHECK_BUTTON: return 'check'
+    if value.startswith('/state') or value.startswith('/violations') or value==STATE_BUTTON: return 'state'
+    return None
 
 def bir_link_from_row(b):
     raw=bir_raw_from_row(b)
@@ -304,11 +312,18 @@ def process_updates(db,tg):
             if not allowed and m['chat'].get('type')=='private':
                 db.set_state('telegram_chat_id',cid); allowed=cid
             if cid!=allowed: continue
-            if txt.startswith('/start'):
-                tg.send(cid,'Радар подключён. Новые и изменённые объявления будут проверяться автоматически.',KEYBOARD)
-            elif txt.startswith('/check'):
+            action=bot_action(txt)
+            if action=='start':
+                tg.send(
+                  cid,
+                  'Радар подключён. Новые и изменённые объявления проверяются автоматически. '
+                  'Кнопки управления закреплены внизу чата.',
+                  reply_keyboard=MAIN_KEYBOARD
+                )
+                db.set_state(KEYBOARD_STATE,'1')
+            elif action=='check':
                 force=True
-            elif txt.startswith('/state') or txt.startswith('/violations'):
+            elif action=='state':
                 show=True
         elif 'callback_query' in u:
             q=u['callback_query']; cid=str(q['message']['chat']['id']); allowed=db.get_state('telegram_chat_id')
@@ -388,7 +403,12 @@ def send_state_summary(db,tg,chat,keyboard=True):
     bir_checked_at=db.get_state('last_bir_success')
     title='📋 Актуальное состояние объявлений на Kufar'
     if not rows:
-        tg.send(chat,title+'\n\nРасхождений, требующих внимания, сейчас нет.',KEYBOARD if keyboard else None)
+        tg.send(
+          chat,
+          title+'\n\n✅ Подтверждённых нарушений сейчас нет.',
+          reply_keyboard=MAIN_KEYBOARD if keyboard else None
+        )
+        if keyboard: db.set_state(KEYBOARD_STATE,'1')
         return
 
     grouped={}
@@ -413,7 +433,8 @@ def send_state_summary(db,tg,chat,keyboard=True):
             tg.send(chat,telegram_html(msg),parse_mode='HTML')
 
     if keyboard:
-        tg.send(chat,'Управление радаром:',KEYBOARD)
+        tg.send(chat,'Управление радаром:',reply_keyboard=MAIN_KEYBOARD)
+        db.set_state(KEYBOARD_STATE,'1')
 
 def should_live_notify(local_now):
     return 8 <= local_now.hour < 21
@@ -427,6 +448,7 @@ async def run():
     db=D1(); tg=Telegram()
     force,show=process_updates(db,tg)
     chat=db.get_state('telegram_chat_id')
+    install_keyboard=bool(chat and db.get_state(KEYBOARD_STATE,'')!='1')
 
     bir_changed=await collect_bir(db,force=force)
     items,changed,previous_active=await collect_kufar(db)
@@ -470,16 +492,16 @@ async def run():
         for item in grouped.values():
             tg.send(chat,telegram_html(fmt_event_group(db,item['events'],item['k'])),parse_mode='HTML')
 
-    if chat and show:
+    if chat and show and not force:
         send_state_summary(db,tg,chat,keyboard=True)
 
     if chat and force:
-        tg.send(
-          chat,
-          f"✅ Проверка завершена. Новых/изменённых объявлений для проверки: {len(targets)}. "
-          f"Сейчас требуют внимания: {active_event_count(db)}.",
-          KEYBOARD
-        )
+        tg.send(chat,f"✅ Принудительная проверка завершена. Проверено новых/изменённых объявлений: {len(targets)}.")
+        send_state_summary(db,tg,chat,keyboard=True)
+
+    if chat and install_keyboard and not morning and not force and not show:
+        send_state_summary(db,tg,chat,keyboard=True)
+        db.set_state(KEYBOARD_STATE,'1')
 
 if __name__=='__main__':
     asyncio.run(run())
