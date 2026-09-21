@@ -1,7 +1,6 @@
 import asyncio, json
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
-from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin, urlparse
 from .config import settings
 from .d1 import D1
@@ -40,6 +39,8 @@ HOUSE_NAMES={
   'vega':'Вега',
 }
 
+FRESH_SCOPE_STATE='fresh_scope_v3_applied'
+
 def fmt_num(v, decimals=2):
     if v is None: return '—'
     try:
@@ -62,27 +63,47 @@ def fmt_rooms(v):
     try: return str(int(float(v)))
     except: return str(v) if v is not None else '—'
 
-def fmt_dt_minsk(v):
-    if not v: return None
+def parse_any_ts(v):
+    if v is None or v=='': return None
     try:
-        dt=datetime.fromisoformat(str(v).replace('Z','+00:00')).astimezone(MINSK)
-        return dt.strftime('%d.%m.%Y, %H:%M')
+        if isinstance(v,(int,float)) or str(v).strip().isdigit():
+            n=float(v)
+            if n>10_000_000_000: n/=1000.0
+            return datetime.fromtimestamp(n,tz=timezone.utc)
+        dt=datetime.fromisoformat(str(v).strip().replace('Z','+00:00'))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
     except:
-        return str(v)
+        return None
+
+def fmt_dt_minsk(v):
+    dt=parse_any_ts(v)
+    return dt.astimezone(MINSK).strftime('%d.%m.%Y, %H:%M') if dt else None
+
+def _json_dict(v):
+    if isinstance(v,dict): return v
+    try:
+        out=json.loads(v or '{}')
+        return out if isinstance(out,dict) else {}
+    except: return {}
+
+def bir_raw_from_row(row):
+    return _json_dict(row.get('bir_raw_json') or row.get('raw_json'))
+
+def kufar_raw_from_row(row):
+    return _json_dict(row.get('kufar_raw_json'))
+
+def kufar_card_time(raw):
+    return fmt_dt_minsk((raw or {}).get('list_time'))
 
 def bir_link_from_row(b):
-    raw={}
-    try: raw=json.loads(b.get('raw_json') or '{}')
-    except: pass
+    raw=bir_raw_from_row(b)
     href=raw.get('house_href')
     if href:
         return urljoin('https://bir.by/',str(href))
     return settings.bir_search_url
 
 def house_label(b):
-    raw={}
-    try: raw=json.loads(b.get('raw_json') or '{}')
-    except: pass
+    raw=bir_raw_from_row(b)
     href=str(raw.get('house_href') or '')
     slug=urlparse(href).path.rstrip('/').split('/')[-1].lower()
     name=HOUSE_NAMES.get(slug)
@@ -125,6 +146,11 @@ def fmt_event_group(db,events,k):
     if k.area is not None: specs.append(f"{fmt_area(k.area)} м²")
     if k.floor is not None: specs.append(f"{fmt_rooms(k.floor)} этаж")
     if specs: parts.append("Квартира: "+", ".join(specs))
+
+    kufar_time=kufar_card_time(k.raw)
+    detected_time=fmt_dt_minsk(first.get('occurred_at'))
+    if kufar_time: parts.append(f"Kufar — публикация/обновление: {kufar_time}")
+    if detected_time: parts.append(f"Радар обнаружил: {detected_time}")
 
     if 'existence' in fields:
         last_seen=fmt_dt_minsk(b.get('last_seen_at'))
@@ -190,11 +216,41 @@ async def collect_bir(db,force=False):
     return True
 
 async def collect_kufar(db):
+    rows=db.query('SELECT COUNT(*) AS n FROM kufar_ads WHERE active=1 AND profile_id=?',[settings.kufar_profile_id])
+    previous_active=int(rows[0]['n']) if rows else 0
     c=KufarCollector(); items=await c.collect(); save_diag(db,'kufar',c.diagnostics)
     changed=save_kufar(db,items,settings.kufar_profile_id)
     db.set_state('last_kufar_success',datetime.now(timezone.utc).isoformat())
     db.set_state('last_kufar_count',str(len(items)))
-    return items,changed
+    return items,changed,previous_active
+
+def choose_audit_targets(items,changed,previous_active):
+    total=len(items)
+    if not total: return [],'empty_snapshot'
+    if previous_active<max(20,int(total*0.50)):
+        return [],'baseline_only'
+    if len(changed)>max(25,int(total*0.10)):
+        return [],'bulk_rebaseline'
+    return changed,'incremental'
+
+def archive_legacy_events_once(db):
+    if db.get_state(FRESH_SCOPE_STATE,'')=='1': return 0
+    rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1')
+    count=int(rows[0]['n']) if rows else 0
+    ts=datetime.now(timezone.utc).isoformat()
+    db.batch([
+      ('UPDATE events SET active=0,resolved_at=? WHERE active=1',[ts]),
+      ('INSERT INTO state(key,value,updated_at) VALUES(?,?,?) '
+       'ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',
+       [FRESH_SCOPE_STATE,'1',ts]),
+      ('INSERT INTO state(key,value,updated_at) VALUES(?,?,?) '
+       'ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',
+       ['fresh_scope_v3_cutover_at',ts,ts]),
+      ('INSERT INTO state(key,value,updated_at) VALUES(?,?,?) '
+       'ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',
+       ['fresh_scope_v3_archived_events',str(count),ts]),
+    ])
+    return count
 
 def close_inactive_ad_events(db):
     ts=datetime.now(timezone.utc).isoformat()
@@ -217,36 +273,6 @@ def close_rounded_area_events(db):
     ts=datetime.now(timezone.utc).isoformat()
     for i in range(0,len(ids),75):
         db.batch([('UPDATE events SET active=0,resolved_at=? WHERE id=?',[ts,event_id]) for event_id in ids[i:i+75]])
-    return len(ids)
-
-def _same_area(a,b):
-    try: return Decimal(str(a))==Decimal(str(b))
-    except (InvalidOperation, ValueError, TypeError): return False
-
-def reopen_directional_area_events(db):
-    rows=db.query(
-      '''SELECT e.id, e.ad_id, e.new_value, e.bir_value,
-                k.area AS kufar_area, b.area AS bir_area
-         FROM events e
-         JOIN kufar_ads k ON k.ad_id=e.ad_id AND k.active=1
-         JOIN bir_objects b ON b.object_key=e.object_key AND b.active=1
-         WHERE e.active=0 AND e.field_name='area' AND e.occurred_at>=?
-           AND NOT EXISTS (
-             SELECT 1 FROM events current
-             WHERE current.active=1 AND current.ad_id=e.ad_id AND current.field_name='area'
-           )
-         ORDER BY e.occurred_at DESC''',
-      [settings.live_cutoff_utc]
-    )
-    ids=[]; seen=set()
-    for r in rows:
-        if r['ad_id'] in seen: continue
-        if area_close(r.get('kufar_area'),r.get('bir_area')): continue
-        if not _same_area(r.get('new_value'),r.get('kufar_area')): continue
-        if not _same_area(r.get('bir_value'),r.get('bir_area')): continue
-        ids.append(r['id']); seen.add(r['ad_id'])
-    for i in range(0,len(ids),75):
-        db.batch([('UPDATE events SET active=1,resolved_at=NULL WHERE id=?',[event_id]) for event_id in ids[i:i+75]])
     return len(ids)
 
 def active_event_count(db):
@@ -290,7 +316,9 @@ def process_updates(db,tg):
 def summary_rows(db):
     return db.query(
       '''SELECT e.*, k.url, k.address, k.area, k.rooms, k.floor,
-                b.building_name, b.official_address, b.unit_no, b.raw_json
+                k.raw_json AS kufar_raw_json,
+                b.building_name, b.official_address, b.unit_no,
+                b.raw_json AS bir_raw_json
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
@@ -338,6 +366,12 @@ def summary_line(r):
     links=[x for x in [f"Kufar — {r.get('url')}" if r.get('url') else None, f"Bir — {bir_url}" if bir_url else None] if x]
     details=[]
     if comparison: details.append(comparison)
+    kufar_time=kufar_card_time(kufar_raw_from_row(r))
+    detected_time=fmt_dt_minsk(r.get('occurred_at'))
+    times=[]
+    if kufar_time: times.append(f"Kufar: {kufar_time}")
+    if detected_time: times.append(f"радар: {detected_time}")
+    if times: details.append("Время — "+" | ".join(times))
     if links: details.append("Ссылки: "+" | ".join(links))
     return ("• "+label+("\n  "+"\n  ".join(details) if details else "")).rstrip()
 
@@ -386,18 +420,20 @@ async def run():
     chat=db.get_state('telegram_chat_id')
 
     bir_changed=await collect_bir(db,force=force)
-    items,changed=await collect_kufar(db)
+    items,changed,previous_active=await collect_kufar(db)
+    targets,selection_mode=choose_audit_targets(items,changed,previous_active)
+    archived_legacy_events=archive_legacy_events_once(db)
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
-    directional_area_events_reopened=reopen_directional_area_events(db)
     print(
-      f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)} "
+      f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} previous_active={previous_active} "
+      f"changed={len(changed)} targets={len(targets)} selection_mode={selection_mode} "
+      f"archived_legacy_events={archived_legacy_events} "
       f"rounded_area_events_closed={rounded_area_events_closed} "
-      f"directional_area_events_reopened={directional_area_events_reopened}"
     )
 
-    # Core rule: only a NEW or EDITED Kufar card is audited.
-    targets=changed
+    # Only incremental NEW/EDITED/REAPPEARED cards are audited. A first or
+    # suspiciously large snapshot becomes a silent baseline instead.
     session=AuditSession(db)
     all_new=[]
     for k in targets:
@@ -431,7 +467,7 @@ async def run():
     if chat and force:
         tg.send(
           chat,
-          f"✅ Проверка завершена. Новых/изменённых объявлений: {len(changed)}. "
+          f"✅ Проверка завершена. Новых/изменённых объявлений для проверки: {len(targets)}. "
           f"Сейчас требуют внимания: {active_event_count(db)}.",
           KEYBOARD
         )
