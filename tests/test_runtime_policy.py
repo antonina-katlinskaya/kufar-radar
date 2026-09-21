@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 import json
 from radar.main import (
     should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets,
-    summary_line, telegram_html, bot_action, CHECK_BUTTON, STATE_BUTTON
+    summary_line, telegram_html, bot_action, CHECK_BUTTON, MAIN_KEYBOARD
 )
 
 MINSK=ZoneInfo('Europe/Minsk')
@@ -41,7 +41,7 @@ def test_small_incremental_change_is_audited():
 
 def test_persistent_keyboard_buttons_are_actions():
     assert bot_action(CHECK_BUTTON)=='check'
-    assert bot_action(STATE_BUTTON)=='state'
+    assert MAIN_KEYBOARD==[[CHECK_BUTTON]]
     assert bot_action('/check')=='check'
     assert bot_action('/violations')=='state'
     assert bot_action('неизвестно') is None
