@@ -14,9 +14,10 @@ class Telegram:
         if not data.get('ok'):
             raise RuntimeError(f"Telegram getUpdates failed: {data.get('description')}")
         return data.get('result',[])
-    def send(self,chat_id,text,keyboard=None):
+    def send(self,chat_id,text,keyboard=None,parse_mode=None):
         payload={'chat_id':chat_id,'text':text,'disable_web_page_preview':True}
         if keyboard: payload['reply_markup']={'inline_keyboard':keyboard}
+        if parse_mode: payload['parse_mode']=parse_mode
         r=httpx.post(self.base+'/sendMessage',json=payload,timeout=30); r.raise_for_status(); return r.json()
     def photo(self,chat_id,path,caption=''):
         with open(path,'rb') as f:
