@@ -1,6 +1,9 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from radar.main import should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets
+import json
+from radar.main import (
+    should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets, summary_line
+)
 
 MINSK=ZoneInfo('Europe/Minsk')
 
@@ -38,3 +41,19 @@ def test_small_incremental_change_is_audited():
 def test_event_time_is_shown_in_minsk_time():
     assert fmt_dt_minsk('2026-09-21T05:16:00Z')=='21.09.2026, 08:16'
     assert fmt_dt_minsk(1790034960000)=='22.09.2026, 02:56'
+
+def test_summary_shows_kufar_and_detection_times():
+    row={
+      'field_name':'price','new_value':'45000',
+      'bir_value':json.dumps({'regular':47000,'fast':46000}),
+      'building_name':'11.2','address':'Игоря Лученка ул, 22, Минск',
+      'unit_no':'4.47','rooms':1,'area':29.6,'floor':4,
+      'url':'https://re.kufar.by/vi/1','object_key':'x',
+      'kufar_raw_json':json.dumps({'list_time':'2026-09-21T05:16:00Z'}),
+      'bir_raw_json':json.dumps({'house_href':'/dom-mediteranian/'}),
+      'occurred_at':'2026-09-21T05:21:00Z',
+    }
+    out=summary_line(row)
+    assert 'Медитераниан (11.2)' in out
+    assert 'Kufar: 45 000 € | Bir: 47 000 € (спец.: 46 000 €)' in out
+    assert 'Время — Kufar: 21.09.2026, 08:16 | радар: 21.09.2026, 08:21' in out
