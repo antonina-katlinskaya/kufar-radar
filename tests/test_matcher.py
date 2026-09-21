@@ -23,6 +23,11 @@ def test_half_rounds_up_not_bankers():
     assert str(round_area_1(30.15))=='30.2'
     assert area_close(30.2,30.15)
 
+def test_area_rounding_is_directional_from_bir_to_kufar():
+    assert area_close(30.15,30.15)
+    assert area_close(30.2,30.15)
+    assert not area_close(30.15,30.2)
+
 def test_room_change_is_mismatch():
     r=match_new(k(area=30.41,rooms=2),[b()]); assert r.obj; assert r.mismatches['rooms']==(2,1)
 
