@@ -2,7 +2,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
 from radar.main import (
-    should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets, summary_line
+    should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets,
+    summary_line, telegram_html
 )
 
 MINSK=ZoneInfo('Europe/Minsk')
@@ -53,7 +54,12 @@ def test_summary_shows_kufar_and_detection_times():
       'bir_raw_json':json.dumps({'house_href':'/dom-mediteranian/'}),
       'occurred_at':'2026-09-21T05:21:00Z',
     }
-    out=summary_line(row)
+    out=summary_line(row,'2026-09-21T05:20:00Z')
     assert 'Медитераниан (11.2)' in out
-    assert 'Kufar: 45 000 € | Bir: 47 000 € (спец.: 46 000 €)' in out
-    assert 'Время — Kufar: 21.09.2026, 08:16 | радар: 21.09.2026, 08:21' in out
+    assert 'пом. № 4.47, 1-комн., 29,60 м², 4 эт.' in out
+    assert 'Kufar: **45 000 €** | BIR: **47 000 € (спец.: 46 000 €)**' in out
+    assert 'Время — Kufar: 21.09.2026, 08:16 | радар: 21.09.2026, 08:21 | BIR: 21.09.2026, 08:20' in out
+    rendered=telegram_html(out)
+    assert '<b>45 000 €</b>' in rendered
+    assert '<b>47 000 € (спец.: 46 000 €)</b>' in rendered
+    assert '**' not in rendered
