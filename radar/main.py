@@ -295,8 +295,7 @@ def summary_rows(db):
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
-         ORDER BY e.occurred_at DESC
-         LIMIT 250''',
+         ORDER BY e.occurred_at DESC''',
       [settings.live_cutoff_utc]
     )
 
