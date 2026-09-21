@@ -1,4 +1,5 @@
 import asyncio, json
+import html, re
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import urljoin, urlparse
@@ -17,12 +18,12 @@ KEYBOARD=[
 ]
 
 TITLES={
-  'price':'Цена на Kufar не совпадает с Bir',
-  'area':'Расхождение по площади между Kufar и Bir',
-  'rooms':'Расхождение по количеству комнат между Kufar и Bir',
-  'floor':'Расхождение по этажу между Kufar и Bir',
-  'address':'Расхождение по адресу между Kufar и Bir',
-  'existence':'Объявление на Kufar не соответствует наличию на Bir',
+  'price':'Цена на Kufar не совпадает с BIR',
+  'area':'Расхождение по площади между Kufar и BIR',
+  'rooms':'Расхождение по количеству комнат между Kufar и BIR',
+  'floor':'Расхождение по этажу между Kufar и BIR',
+  'address':'Расхождение по адресу между Kufar и BIR',
+  'existence':'Объявление на Kufar не соответствует наличию на BIR',
 }
 
 HOUSE_NAMES={
@@ -95,6 +96,10 @@ def kufar_raw_from_row(row):
 def kufar_card_time(raw):
     return fmt_dt_minsk((raw or {}).get('list_time'))
 
+def telegram_html(text):
+    escaped=html.escape(str(text),quote=False)
+    return re.sub(r'\*\*(.+?)\*\*',r'<b>\1</b>',escaped)
+
 def bir_link_from_row(b):
     raw=bir_raw_from_row(b)
     href=raw.get('house_href')
@@ -130,18 +135,17 @@ def fmt_event_group(db,events,k):
     fields={e['field_name']:e for e in events}
 
     if set(fields)=={'existence'}:
-        parts=["🚨 Объявление на Kufar не соответствует наличию на Bir"]
+        parts=["🚨 Объявление на Kufar не соответствует наличию на BIR"]
     elif len(fields)==1:
         field=next(iter(fields))
-        parts=[f"🚨 {TITLES.get(field,'Расхождение между Kufar и Bir')}"]
+        parts=[f"🚨 {TITLES.get(field,'Расхождение между Kufar и BIR')}"]
     else:
-        parts=["🚨 Расхождения между Kufar и Bir"]
+        parts=["🚨 Расхождения между Kufar и BIR"]
 
     if building: parts.append(f"Дом: {building}")
     if address: parts.append(f"Адрес: {address}")
-    if b.get('unit_no'): parts.append(f"Помещение № {b.get('unit_no')}")
-
     specs=[]
+    if b.get('unit_no'): specs.append(f"помещение № {b.get('unit_no')}")
     if k.rooms is not None: specs.append(f"{fmt_rooms(k.rooms)}-комн.")
     if k.area is not None: specs.append(f"{fmt_area(k.area)} м²")
     if k.floor is not None: specs.append(f"{fmt_rooms(k.floor)} этаж")
@@ -149,16 +153,18 @@ def fmt_event_group(db,events,k):
 
     kufar_time=kufar_card_time(k.raw)
     detected_time=fmt_dt_minsk(first.get('occurred_at'))
+    bir_checked_time=fmt_dt_minsk(db.get_state('last_bir_success'))
     if kufar_time: parts.append(f"Kufar — публикация/обновление: {kufar_time}")
     if detected_time: parts.append(f"Радар обнаружил: {detected_time}")
+    if bir_checked_time: parts.append(f"BIR проверен: {bir_checked_time}")
 
     if 'existence' in fields:
         last_seen=fmt_dt_minsk(b.get('last_seen_at'))
         parts.append('')
         if last_seen:
-            parts.append(f"Последний раз в выдаче Bir: {last_seen}")
+            parts.append(f"Последний раз в выдаче BIR: {last_seen}")
         else:
-            parts.append("На момент проверки соответствующий объект на Bir не найден.")
+            parts.append("На момент проверки соответствующий объект на BIR не найден.")
     else:
         for field in ['price','area','rooms','floor','address']:
             e=fields.get(field)
@@ -169,21 +175,21 @@ def fmt_event_group(db,events,k):
                 except: bv={}
                 parts += [
                   "Цена",
-                  f"Kufar: {fmt_eur(e.get('new_value'))}",
-                  f"Bir: {fmt_eur(bv.get('regular'))}",
-                  f"Спеццена Bir: {fmt_eur(bv.get('fast'))}",
+                  f"Kufar: **{fmt_eur(e.get('new_value'))}**",
+                  f"BIR: **{fmt_eur(bv.get('regular'))}**",
+                  f"Спеццена BIR: **{fmt_eur(bv.get('fast'))}**",
                 ]
             elif field=='area':
-                parts += ["Площадь",f"Kufar: {fmt_area(e.get('new_value'))} м²",f"Bir: {fmt_area(e.get('bir_value'))} м²"]
+                parts += ["Площадь",f"Kufar: **{fmt_area(e.get('new_value'))} м²**",f"BIR: **{fmt_area(e.get('bir_value'))} м²**"]
             elif field=='rooms':
-                parts += ["Комнаты",f"Kufar: {fmt_rooms(e.get('new_value'))}",f"Bir: {fmt_rooms(e.get('bir_value'))}"]
+                parts += ["Комнаты",f"Kufar: **{fmt_rooms(e.get('new_value'))}**",f"BIR: **{fmt_rooms(e.get('bir_value'))}**"]
             elif field=='floor':
-                parts += ["Этаж",f"Kufar: {fmt_rooms(e.get('new_value'))}",f"Bir: {fmt_rooms(e.get('bir_value'))}"]
+                parts += ["Этаж",f"Kufar: **{fmt_rooms(e.get('new_value'))}**",f"BIR: **{fmt_rooms(e.get('bir_value'))}**"]
             elif field=='address':
-                parts += ["Адрес",f"Kufar: {e.get('new_value') or '—'}",f"Bir: {e.get('bir_value') or '—'}"]
+                parts += ["Адрес",f"Kufar: **{e.get('new_value') or '—'}**",f"BIR: **{e.get('bir_value') or '—'}**"]
 
     if k.url: parts += ['',f"Kufar: {k.url}"]
-    if b: parts.append(f"Bir: {bir_link_from_row(b)}")
+    if b: parts.append(f"BIR: {bir_link_from_row(b)}")
     return '\n'.join(parts)
 
 def save_diag(db,source,diag):
@@ -337,20 +343,20 @@ def comparison_line(r):
         bir_text=regular
         if bir.get('fast') is not None and fast!=regular:
             bir_text=f"{regular} (спец.: {fast})"
-        return f"Kufar: {fmt_eur(r.get('new_value'))} | Bir: {bir_text}"
+        return f"Kufar: **{fmt_eur(r.get('new_value'))}** | BIR: **{bir_text}**"
     if field=='area':
-        return f"Kufar: {fmt_area(r.get('new_value'))} м² | Bir: {fmt_area(r.get('bir_value'))} м²"
+        return f"Kufar: **{fmt_area(r.get('new_value'))} м²** | BIR: **{fmt_area(r.get('bir_value'))} м²**"
     if field=='rooms':
-        return f"Kufar: {fmt_rooms(r.get('new_value'))} комн. | Bir: {fmt_rooms(r.get('bir_value'))} комн."
+        return f"Kufar: **{fmt_rooms(r.get('new_value'))} комн.** | BIR: **{fmt_rooms(r.get('bir_value'))} комн.**"
     if field=='floor':
-        return f"Kufar: {fmt_rooms(r.get('new_value'))} этаж | Bir: {fmt_rooms(r.get('bir_value'))} этаж"
+        return f"Kufar: **{fmt_rooms(r.get('new_value'))} этаж** | BIR: **{fmt_rooms(r.get('bir_value'))} этаж**"
     if field=='address':
-        return f"Kufar: {r.get('new_value') or '—'} | Bir: {r.get('bir_value') or '—'}"
+        return f"Kufar: **{r.get('new_value') or '—'}** | BIR: **{r.get('bir_value') or '—'}**"
     if field=='existence':
-        return "Kufar: объявление активно | Bir: соответствующего объекта нет"
+        return "Kufar: **объявление активно** | BIR: **соответствующего объекта нет**"
     return None
 
-def summary_line(r):
+def summary_line(r,bir_checked_at=None):
     building=house_label(r)
     address=r.get('address') or r.get('official_address')
     bits=[]
@@ -363,7 +369,7 @@ def summary_line(r):
     label=', '.join(bits) if bits else 'Объявление'
     bir_url=bir_link_from_row(r) if r.get('object_key') else None
     comparison=comparison_line(r)
-    links=[x for x in [f"Kufar — {r.get('url')}" if r.get('url') else None, f"Bir — {bir_url}" if bir_url else None] if x]
+    links=[x for x in [f"Kufar — {r.get('url')}" if r.get('url') else None, f"BIR — {bir_url}" if bir_url else None] if x]
     details=[]
     if comparison: details.append(comparison)
     kufar_time=kufar_card_time(kufar_raw_from_row(r))
@@ -371,12 +377,15 @@ def summary_line(r):
     times=[]
     if kufar_time: times.append(f"Kufar: {kufar_time}")
     if detected_time: times.append(f"радар: {detected_time}")
+    bir_checked_time=fmt_dt_minsk(bir_checked_at)
+    if bir_checked_time: times.append(f"BIR: {bir_checked_time}")
     if times: details.append("Время — "+" | ".join(times))
     if links: details.append("Ссылки: "+" | ".join(links))
     return ("• "+label+("\n  "+"\n  ".join(details) if details else "")).rstrip()
 
 def send_state_summary(db,tg,chat,keyboard=True):
     rows=summary_rows(db)
+    bir_checked_at=db.get_state('last_bir_success')
     title='📋 Актуальное состояние объявлений на Kufar'
     if not rows:
         tg.send(chat,title+'\n\nРасхождений, требующих внимания, сейчас нет.',KEYBOARD if keyboard else None)
@@ -394,14 +403,14 @@ def send_state_summary(db,tg,chat,keyboard=True):
         first=False
         chunks=[]; cur=header
         for r in group:
-            line='\n\n'+summary_line(r)
+            line='\n\n'+summary_line(r,bir_checked_at)
             if len(cur)+len(line)>3600:
                 chunks.append(cur); cur=f"{TITLES.get(field,field)} — продолжение"+line
             else:
                 cur+=line
         chunks.append(cur)
         for msg in chunks:
-            tg.send(chat,msg)
+            tg.send(chat,telegram_html(msg),parse_mode='HTML')
 
     if keyboard:
         tg.send(chat,'Управление радаром:',KEYBOARD)
@@ -459,7 +468,7 @@ async def run():
         for e,k in all_new:
             grouped.setdefault(k.ad_id,{'k':k,'events':[]})['events'].append(e)
         for item in grouped.values():
-            tg.send(chat,fmt_event_group(db,item['events'],item['k']))
+            tg.send(chat,telegram_html(fmt_event_group(db,item['events'],item['k'])),parse_mode='HTML')
 
     if chat and show:
         send_state_summary(db,tg,chat,keyboard=True)
