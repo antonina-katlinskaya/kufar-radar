@@ -196,6 +196,14 @@ def active_event_count(db):
     rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1 AND occurred_at>=?',[settings.live_cutoff_utc])
     return int(rows[0]['n']) if rows else 0
 
+def active_event_counts(db):
+    rows=db.query(
+      'SELECT field_name, COUNT(*) AS n FROM events '
+      'WHERE active=1 AND occurred_at>=? GROUP BY field_name ORDER BY field_name',
+      [settings.live_cutoff_utc]
+    )
+    return {r['field_name']: int(r['n']) for r in rows}
+
 def process_updates(db,tg):
     offset=int(db.get_state('telegram_offset','0') or 0); force=False; show=False
     ups=tg.get_updates(offset)
@@ -312,7 +320,11 @@ async def run():
         for e in session.sync(k,r):
             all_new.append((e,k))
     statements=session.flush()
-    print(f"RADAR_RESULT targets={len(targets)} new_events={len(all_new)} active_events={active_event_count(db)} statements={statements}")
+    active_by_field=active_event_counts(db)
+    print(
+      f"RADAR_RESULT targets={len(targets)} new_events={len(all_new)} "
+      f"active_events={sum(active_by_field.values())} active_by_field={active_by_field} statements={statements}"
+    )
 
     local_now=datetime.now(MINSK)
     morning=False
@@ -341,4 +353,3 @@ async def run():
 
 if __name__=='__main__':
     asyncio.run(run())
-
