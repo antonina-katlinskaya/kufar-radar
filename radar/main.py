@@ -8,6 +8,7 @@ from .collectors.kufar import KufarCollector
 from .collectors.bir import BirCollector
 from .store import save_kufar, save_bir
 from .audit import AuditSession
+from .matcher import area_close
 
 MINSK=ZoneInfo('Europe/Minsk')
 KEYBOARD=[
@@ -176,6 +177,21 @@ def close_inactive_ad_events(db):
       [ts,settings.live_cutoff_utc]
     )
 
+def close_rounded_area_events(db):
+    rows=db.query(
+      '''SELECT e.id, k.area AS kufar_area, b.area AS bir_area
+         FROM events e
+         JOIN kufar_ads k ON k.ad_id=e.ad_id
+         JOIN bir_objects b ON b.object_key=e.object_key
+         WHERE e.active=1 AND e.field_name='area' AND e.occurred_at>=?''',
+      [settings.live_cutoff_utc]
+    )
+    ids=[r['id'] for r in rows if area_close(r.get('kufar_area'),r.get('bir_area'))]
+    ts=datetime.now(timezone.utc).isoformat()
+    for i in range(0,len(ids),75):
+        db.batch([('UPDATE events SET active=0,resolved_at=? WHERE id=?',[ts,event_id]) for event_id in ids[i:i+75]])
+    return len(ids)
+
 def active_event_count(db):
     rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1 AND occurred_at>=?',[settings.live_cutoff_utc])
     return int(rows[0]['n']) if rows else 0
@@ -281,7 +297,11 @@ async def run():
     bir_changed=await collect_bir(db,force=force)
     items,changed=await collect_kufar(db)
     close_inactive_ad_events(db)
-    print(f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)}")
+    rounded_area_events_closed=close_rounded_area_events(db)
+    print(
+      f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)} "
+      f"rounded_area_events_closed={rounded_area_events_closed}"
+    )
 
     # Core rule: only a NEW or EDITED Kufar card is audited.
     targets=changed
@@ -321,3 +341,4 @@ async def run():
 
 if __name__=='__main__':
     asyncio.run(run())
+
