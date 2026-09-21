@@ -14,9 +14,8 @@ from .matcher import area_close
 
 MINSK=ZoneInfo('Europe/Minsk')
 CHECK_BUTTON='🔄 Проверить сейчас'
-STATE_BUTTON='📋 Показать расхождения'
-MAIN_KEYBOARD=[[CHECK_BUTTON,STATE_BUTTON]]
-KEYBOARD_STATE='telegram_main_keyboard_v1_sent'
+MAIN_KEYBOARD=[[CHECK_BUTTON]]
+KEYBOARD_STATE='telegram_main_keyboard_v2_sent'
 
 TITLES={
   'price':'Цена на Kufar не совпадает с BIR',
@@ -105,7 +104,7 @@ def bot_action(text):
     value=(text or '').strip()
     if value.startswith('/start'): return 'start'
     if value.startswith('/check') or value==CHECK_BUTTON: return 'check'
-    if value.startswith('/state') or value.startswith('/violations') or value==STATE_BUTTON: return 'state'
+    if value.startswith('/state') or value.startswith('/violations') or value=='📋 Показать расхождения': return 'state'
     return None
 
 def bir_link_from_row(b):
