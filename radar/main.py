@@ -1,6 +1,8 @@
 import asyncio, json
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
+from decimal import Decimal, InvalidOperation
+from urllib.parse import urljoin, urlparse
 from .config import settings
 from .d1 import D1
 from .telegram import Telegram
@@ -22,6 +24,20 @@ TITLES={
   'floor':'Расхождение по этажу между Kufar и Bir',
   'address':'Расхождение по адресу между Kufar и Bir',
   'existence':'Объявление на Kufar не соответствует наличию на Bir',
+}
+
+HOUSE_NAMES={
+  'andromeda':'Андромеда',
+  'atlantik':'Атлантик',
+  'dom-atlantik':'Атлантик',
+  'dom-everest':'Эверест',
+  'dom-kontinental':'Континенталь',
+  'dom-mediteranian':'Медитераниан',
+  'dom-shtadt-park':'Штадт-парк',
+  'kaspian':'Каспиан',
+  'lira':'Лира',
+  'sirius':'Сириус',
+  'vega':'Вега',
 }
 
 def fmt_num(v, decimals=2):
@@ -60,8 +76,19 @@ def bir_link_from_row(b):
     except: pass
     href=raw.get('house_href')
     if href:
-        return href if str(href).startswith('http') else 'https://bir.by'+str(href)
+        return urljoin('https://bir.by/',str(href))
     return settings.bir_search_url
+
+def house_label(b):
+    raw={}
+    try: raw=json.loads(b.get('raw_json') or '{}')
+    except: pass
+    href=str(raw.get('house_href') or '')
+    slug=urlparse(href).path.rstrip('/').split('/')[-1].lower()
+    name=HOUSE_NAMES.get(slug)
+    number=b.get('building_name')
+    if name and number: return f"{name} ({number})"
+    return name or number
 
 def event_context(db,e,k):
     b={}
@@ -72,7 +99,7 @@ def event_context(db,e,k):
     raw={}
     try: raw=json.loads(b.get('raw_json') or '{}')
     except: pass
-    building=b.get('building_name') or raw.get('house_name') or raw.get('building')
+    building=house_label(b) or raw.get('house_name') or raw.get('building')
     address=k.address or b.get('official_address') or raw.get('address')
     return b,building,address
 
@@ -192,6 +219,36 @@ def close_rounded_area_events(db):
         db.batch([('UPDATE events SET active=0,resolved_at=? WHERE id=?',[ts,event_id]) for event_id in ids[i:i+75]])
     return len(ids)
 
+def _same_area(a,b):
+    try: return Decimal(str(a))==Decimal(str(b))
+    except (InvalidOperation, ValueError, TypeError): return False
+
+def reopen_directional_area_events(db):
+    rows=db.query(
+      '''SELECT e.id, e.ad_id, e.new_value, e.bir_value,
+                k.area AS kufar_area, b.area AS bir_area
+         FROM events e
+         JOIN kufar_ads k ON k.ad_id=e.ad_id AND k.active=1
+         JOIN bir_objects b ON b.object_key=e.object_key AND b.active=1
+         WHERE e.active=0 AND e.field_name='area' AND e.occurred_at>=?
+           AND NOT EXISTS (
+             SELECT 1 FROM events current
+             WHERE current.active=1 AND current.ad_id=e.ad_id AND current.field_name='area'
+           )
+         ORDER BY e.occurred_at DESC''',
+      [settings.live_cutoff_utc]
+    )
+    ids=[]; seen=set()
+    for r in rows:
+        if r['ad_id'] in seen: continue
+        if area_close(r.get('kufar_area'),r.get('bir_area')): continue
+        if not _same_area(r.get('new_value'),r.get('kufar_area')): continue
+        if not _same_area(r.get('bir_value'),r.get('bir_area')): continue
+        ids.append(r['id']); seen.add(r['ad_id'])
+    for i in range(0,len(ids),75):
+        db.batch([('UPDATE events SET active=1,resolved_at=NULL WHERE id=?',[event_id]) for event_id in ids[i:i+75]])
+    return len(ids)
+
 def active_event_count(db):
     rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1 AND occurred_at>=?',[settings.live_cutoff_utc])
     return int(rows[0]['n']) if rows else 0
@@ -243,8 +300,31 @@ def summary_rows(db):
       [settings.live_cutoff_utc]
     )
 
+def comparison_line(r):
+    field=r.get('field_name')
+    if field=='price':
+        try: bir=json.loads(r.get('bir_value') or '{}')
+        except: bir={}
+        regular=fmt_eur(bir.get('regular'))
+        fast=fmt_eur(bir.get('fast'))
+        bir_text=regular
+        if bir.get('fast') is not None and fast!=regular:
+            bir_text=f"{regular} (спец.: {fast})"
+        return f"Kufar: {fmt_eur(r.get('new_value'))} | Bir: {bir_text}"
+    if field=='area':
+        return f"Kufar: {fmt_area(r.get('new_value'))} м² | Bir: {fmt_area(r.get('bir_value'))} м²"
+    if field=='rooms':
+        return f"Kufar: {fmt_rooms(r.get('new_value'))} комн. | Bir: {fmt_rooms(r.get('bir_value'))} комн."
+    if field=='floor':
+        return f"Kufar: {fmt_rooms(r.get('new_value'))} этаж | Bir: {fmt_rooms(r.get('bir_value'))} этаж"
+    if field=='address':
+        return f"Kufar: {r.get('new_value') or '—'} | Bir: {r.get('bir_value') or '—'}"
+    if field=='existence':
+        return "Kufar: объявление активно | Bir: соответствующего объекта нет"
+    return None
+
 def summary_line(r):
-    building=r.get('building_name')
+    building=house_label(r)
     address=r.get('address') or r.get('official_address')
     bits=[]
     if building: bits.append(str(building))
@@ -255,8 +335,12 @@ def summary_line(r):
     if r.get('floor') is not None: bits.append(f"{fmt_rooms(r.get('floor'))} эт.")
     label=', '.join(bits) if bits else 'Объявление'
     bir_url=bir_link_from_row(r) if r.get('object_key') else None
-    links=[x for x in [f"Kufar: {r.get('url')}" if r.get('url') else None, f"Bir: {bir_url}" if bir_url else None] if x]
-    return ("• "+label+("\n  "+"\n  ".join(links) if links else "")).rstrip()
+    comparison=comparison_line(r)
+    links=[x for x in [f"Kufar — {r.get('url')}" if r.get('url') else None, f"Bir — {bir_url}" if bir_url else None] if x]
+    details=[]
+    if comparison: details.append(comparison)
+    if links: details.append("Ссылки: "+" | ".join(links))
+    return ("• "+label+("\n  "+"\n  ".join(details) if details else "")).rstrip()
 
 def send_state_summary(db,tg,chat,keyboard=True):
     rows=summary_rows(db)
@@ -306,9 +390,11 @@ async def run():
     items,changed=await collect_kufar(db)
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
+    directional_area_events_reopened=reopen_directional_area_events(db)
     print(
       f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} changed={len(changed)} "
-      f"rounded_area_events_closed={rounded_area_events_closed}"
+      f"rounded_area_events_closed={rounded_area_events_closed} "
+      f"directional_area_events_reopened={directional_area_events_reopened}"
     )
 
     # Core rule: only a NEW or EDITED Kufar card is audited.
