@@ -75,8 +75,8 @@ def test_summary_shows_kufar_and_detection_times():
       {'text':'Открыть BIR','url':'https://bir.by/dom-mediteranian/'},
     ]]
     rendered=telegram_html(out)
-    assert '<b>45 000 €</b>' in rendered
-    assert '<b>47 000 €</b>' in rendered
+    assert '<b>Kufar: 45 000 €</b>' in rendered
+    assert '<b>BIR: 47 000 €</b>' in rendered
     assert '**' not in rendered
 
 def test_morning_overview_is_short_and_scannable():
