@@ -1,4 +1,4 @@
-import asyncio, json
+import asyncio, json, secrets
 import html, re
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -16,6 +16,10 @@ MINSK=ZoneInfo('Europe/Minsk')
 CHECK_BUTTON='🔄 Проверить сейчас'
 MAIN_KEYBOARD=[[CHECK_BUTTON]]
 KEYBOARD_STATE='telegram_main_keyboard_v3_sent'
+SUBSCRIBERS_STATE='telegram_chat_ids_v1'
+INVITE_TOKEN_STATE='telegram_invite_token_v1'
+INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
+BOT_USERNAME='kufar_radarr_bot'
 
 TITLES={
   'price':'Цена на Kufar не совпадает с BIR',
@@ -133,10 +137,57 @@ def telegram_html(text):
 
 def bot_action(text):
     value=(text or '').strip()
+    if value.startswith('/invite'): return 'invite'
     if value.startswith('/start'): return 'start'
     if value.startswith('/check') or value==CHECK_BUTTON: return 'check'
     if value.startswith('/state') or value.startswith('/violations') or value=='📋 Показать расхождения': return 'state'
     return None
+
+def start_payload(text):
+    match=re.match(r'^/start(?:@\w+)?(?:\s+([A-Za-z0-9_-]{1,64}))?\s*$',(text or '').strip())
+    return match.group(1) if match else None
+
+def subscribed_chat_ids(db):
+    values=[]
+    legacy=db.get_state('telegram_chat_id')
+    if legacy: values.append(str(legacy))
+    try:
+        stored=json.loads(db.get_state(SUBSCRIBERS_STATE,'[]') or '[]')
+        if isinstance(stored,list): values += [str(v) for v in stored if v is not None]
+    except: pass
+    return list(dict.fromkeys(values))
+
+def add_subscriber(db,chat_id):
+    chat_id=str(chat_id)
+    values=subscribed_chat_ids(db)
+    if chat_id not in values:
+        values.append(chat_id)
+        db.set_state(SUBSCRIBERS_STATE,json.dumps(values,separators=(',',':')))
+    return values
+
+def create_invite(db):
+    token=secrets.token_urlsafe(24)
+    db.set_state(INVITE_TOKEN_STATE,token)
+    return f'https://t.me/{BOT_USERNAME}?start={token}'
+
+def consume_invite(db,chat_id,payload):
+    expected=db.get_state(INVITE_TOKEN_STATE,'')
+    if not payload or not expected or not secrets.compare_digest(str(payload),str(expected)):
+        return False
+    add_subscriber(db,chat_id)
+    db.set_state(INVITE_TOKEN_STATE,'')
+    return True
+
+def send_invite(db,tg,owner_chat):
+    url=create_invite(db)
+    tg.send(
+      owner_chat,
+      '👭 Ссылка для подключения сестры\n\n'
+      'Перешлите ей эту ссылку. Она нажмёт «Старт» — и получит те же уведомления '
+      'и кнопку «🔄 Проверить сейчас», что и вы.\n\n'
+      f'{url}\n\nСсылка одноразовая: посторонний человек подключиться по ней не сможет после её использования.'
+    )
+    return url
 
 def bir_link_from_row(b):
     raw=bir_raw_from_row(b)
@@ -361,17 +412,34 @@ def active_event_counts(db):
     return {r['field_name']: int(r['n']) for r in rows}
 
 def process_updates(db,tg):
-    offset=int(db.get_state('telegram_offset','0') or 0); force=False; show=False
+    offset=int(db.get_state('telegram_offset','0') or 0)
+    force_chats=set(); show_chats=set(); joined_chats=set()
     ups=tg.get_updates(offset)
     for u in ups:
         offset=max(offset,int(u['update_id'])+1)
         if 'message' in u:
             m=u['message']; cid=str(m['chat']['id']); txt=m.get('text','')
-            allowed=db.get_state('telegram_chat_id')
-            if not allowed and m['chat'].get('type')=='private':
-                db.set_state('telegram_chat_id',cid); allowed=cid
-            if cid!=allowed: continue
             action=bot_action(txt)
+            owner=db.get_state('telegram_chat_id')
+            if not owner and action=='start' and m['chat'].get('type')=='private':
+                db.set_state('telegram_chat_id',cid)
+                add_subscriber(db,cid)
+                owner=cid
+            allowed=set(subscribed_chat_ids(db))
+
+            if cid not in allowed:
+                if action=='start' and m['chat'].get('type')=='private' and consume_invite(db,cid,start_payload(txt)):
+                    joined_chats.add(cid)
+                    tg.send(
+                      cid,
+                      'Радар подключён. Вы будете получать те же автоматические уведомления и сводки. '
+                      'Кнопка проверки закреплена внизу чата.',
+                      reply_keyboard=MAIN_KEYBOARD
+                    )
+                elif action=='start':
+                    tg.send(cid,'Этот радар закрытый. Для подключения нужна действующая пригласительная ссылка.')
+                continue
+
             if action=='start':
                 tg.send(
                   cid,
@@ -381,17 +449,19 @@ def process_updates(db,tg):
                 )
                 db.set_state(KEYBOARD_STATE,'1')
             elif action=='check':
-                force=True
+                force_chats.add(cid)
             elif action=='state':
-                show=True
+                show_chats.add(cid)
+            elif action=='invite' and cid==str(owner):
+                send_invite(db,tg,cid)
         elif 'callback_query' in u:
-            q=u['callback_query']; cid=str(q['message']['chat']['id']); allowed=db.get_state('telegram_chat_id')
-            if cid!=allowed: continue
+            q=u['callback_query']; cid=str(q['message']['chat']['id'])
+            if cid not in set(subscribed_chat_ids(db)): continue
             tg.answer_callback(q['id'])
-            if q.get('data')=='check_now': force=True
-            if q.get('data') in {'state_now','violations'}: show=True
+            if q.get('data')=='check_now': force_chats.add(cid)
+            if q.get('data') in {'state_now','violations'}: show_chats.add(cid)
     db.set_state('telegram_offset',str(offset))
-    return force,show
+    return force_chats,show_chats,joined_chats
 
 def summary_rows(db):
     return db.query(
@@ -471,6 +541,22 @@ def send_state_summary(db,tg,chat,keyboard=True,mode='status'):
         )
     if keyboard: db.set_state(KEYBOARD_STATE,'1')
 
+def safe_state_summary(db,tg,chat,keyboard=True,mode='status'):
+    try:
+        send_state_summary(db,tg,chat,keyboard=keyboard,mode=mode)
+        return True
+    except Exception as exc:
+        print(f'TELEGRAM_SEND_ERROR chat={chat} type={type(exc).__name__} detail={exc}')
+        return False
+
+def safe_send(tg,chat,text,**kwargs):
+    try:
+        tg.send(chat,text,**kwargs)
+        return True
+    except Exception as exc:
+        print(f'TELEGRAM_SEND_ERROR chat={chat} type={type(exc).__name__} detail={exc}')
+        return False
+
 def should_live_notify(local_now):
     return 8 <= local_now.hour < 21
 
@@ -481,11 +567,19 @@ def should_send_morning_summary(db,local_now):
 
 async def run():
     db=D1(); tg=Telegram()
-    force,show=process_updates(db,tg)
-    chat=db.get_state('telegram_chat_id')
-    install_keyboard=bool(chat and db.get_state(KEYBOARD_STATE,'')!='1')
+    force_chats,show_chats,joined_chats=process_updates(db,tg)
+    chats=subscribed_chat_ids(db)
+    owner=db.get_state('telegram_chat_id')
+    install_keyboard=bool(chats and db.get_state(KEYBOARD_STATE,'')!='1')
 
-    bir_changed=await collect_bir(db,force=force)
+    if owner and db.get_state(INVITE_NOTICE_STATE,'')!='1':
+        try:
+            send_invite(db,tg,str(owner))
+            db.set_state(INVITE_NOTICE_STATE,'1')
+        except Exception as exc:
+            print(f'TELEGRAM_INVITE_ERROR type={type(exc).__name__} detail={exc}')
+
+    bir_changed=await collect_bir(db,force=bool(force_chats))
     items,changed,previous_active=await collect_kufar(db)
     targets,selection_mode=choose_audit_targets(items,changed,previous_active)
     archived_legacy_events=archive_legacy_events_once(db)
@@ -515,29 +609,34 @@ async def run():
 
     local_now=datetime.now(MINSK)
     morning=False
-    if chat and should_send_morning_summary(db,local_now):
-        send_state_summary(db,tg,chat,keyboard=True,mode='morning')
-        db.set_state('morning_summary_date',local_now.date().isoformat())
-        morning=True
+    if chats and should_send_morning_summary(db,local_now):
+        sent=False
+        for chat in chats:
+            sent=safe_state_summary(db,tg,chat,keyboard=True,mode='morning') or sent
+        if sent:
+            db.set_state('morning_summary_date',local_now.date().isoformat())
+            morning=True
 
-    if chat and should_live_notify(local_now) and not morning:
+    if chats and should_live_notify(local_now) and not morning:
         grouped={}
         for e,k in all_new:
             grouped.setdefault(k.ad_id,{'k':k,'events':[]})['events'].append(e)
         for item in grouped.values():
-            tg.send(
-              chat,telegram_html(fmt_event_group(db,item['events'],item['k'])),
-              keyboard=event_link_keyboard(db,item['events'][0],item['k']),parse_mode='HTML'
-            )
+            for chat in chats:
+                safe_send(
+                  tg,chat,telegram_html(fmt_event_group(db,item['events'],item['k'])),
+                  keyboard=event_link_keyboard(db,item['events'][0],item['k']),parse_mode='HTML'
+                )
 
-    if chat and show and not force:
-        send_state_summary(db,tg,chat,keyboard=True)
+    for chat in show_chats-force_chats:
+        safe_state_summary(db,tg,chat,keyboard=True)
 
-    if chat and force:
-        send_state_summary(db,tg,chat,keyboard=True)
+    for chat in force_chats|joined_chats:
+        safe_state_summary(db,tg,chat,keyboard=True)
 
-    if chat and install_keyboard and not morning and not force and not show:
-        send_state_summary(db,tg,chat,keyboard=True)
+    if chats and install_keyboard and not morning and not force_chats and not show_chats and not joined_chats:
+        for chat in chats:
+            safe_state_summary(db,tg,chat,keyboard=True)
         db.set_state(KEYBOARD_STATE,'1')
 
 if __name__=='__main__':
