@@ -3,7 +3,8 @@ from zoneinfo import ZoneInfo
 import json
 from radar.main import (
     should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets,
-    summary_line, telegram_html, bot_action, CHECK_BUTTON, MAIN_KEYBOARD
+    summary_line, summary_overview, summary_link_keyboard, telegram_html,
+    bot_action, CHECK_BUTTON, MAIN_KEYBOARD
 )
 
 MINSK=ZoneInfo('Europe/Minsk')
@@ -62,11 +63,31 @@ def test_summary_shows_kufar_and_detection_times():
       'occurred_at':'2026-09-21T05:21:00Z',
     }
     out=summary_line(row,'2026-09-21T05:20:00Z')
-    assert 'Медитераниан (11.2)' in out
-    assert 'пом. № 4.47, 1-комн., 29,60 м², 4 эт.' in out
-    assert 'Kufar: **45 000 €** | BIR: **47 000 € (спец.: 46 000 €)**' in out
-    assert 'Время — Kufar: 21.09.2026, 08:16 | радар: 21.09.2026, 08:21 | BIR: 21.09.2026, 08:20' in out
+    assert '🔴 **НЕ СОВПАДАЕТ ЦЕНА**' in out
+    assert '🏢 **Медитераниан · дом 11.2**' in out
+    assert '🚪 Помещение № 4.47 · 1-комн. · 29,60 м² · 4 этаж' in out
+    assert '**Kufar: 45 000 €**' in out
+    assert '**BIR: 47 000 €**' in out
+    assert '**Спеццена BIR: 46 000 €**' in out
+    assert '🕒 Kufar 21.09 08:16 · радар 21.09 08:21 · BIR 21.09 08:20' in out
+    assert summary_link_keyboard(row)==[[
+      {'text':'Открыть Kufar','url':'https://re.kufar.by/vi/1'},
+      {'text':'Открыть BIR','url':'https://bir.by/dom-mediteranian/'},
+    ]]
     rendered=telegram_html(out)
     assert '<b>45 000 €</b>' in rendered
-    assert '<b>47 000 € (спец.: 46 000 €)</b>' in rendered
+    assert '<b>47 000 €</b>' in rendered
     assert '**' not in rendered
+
+def test_morning_overview_is_short_and_scannable():
+    rows=[{'field_name':'area'},{'field_name':'floor'}]
+    out=summary_overview(
+      rows,'2026-09-22T05:02:00Z',mode='morning',
+      local_now=datetime(2026,9,22,8,2,tzinfo=MINSK)
+    )
+    assert '☀️ **УТРЕННЯЯ ПРОВЕРКА — 22.09**' in out
+    assert '⚠️ **Найдено расхождений: 2**' in out
+    assert '📐 Площадь — 1' in out
+    assert '🏢 Этаж — 1' in out
+    assert 'Проверка завершена в 08:02' in out
+    assert 'Управление радаром' not in out
