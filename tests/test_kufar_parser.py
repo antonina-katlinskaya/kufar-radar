@@ -1,4 +1,4 @@
-from radar.collectors.kufar import parse_ad_dict, contact_person
+from radar.collectors.kufar import KufarCollector, parse_ad_dict, contact_person
 
 def test_real_kufar_shape():
     d={
@@ -23,3 +23,8 @@ def test_real_kufar_shape():
     assert x.floor==2
     assert x.address.startswith('Игоря Лученка')
     assert contact_person(x)=='Алёна'
+
+def test_collector_can_target_an_individual_profile_without_name_filter():
+    c=KufarCollector('11080367',None)
+    assert c.profile_id=='11080367'
+    assert c.contact_name is None

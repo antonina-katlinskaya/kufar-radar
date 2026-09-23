@@ -105,9 +105,12 @@ def is_mw_claimed(item:KufarListing):
     return any(h in raw for h in MW_HINTS)
 
 class KufarCollector:
-    def __init__(self): self.diagnostics=[]
+    def __init__(self,profile_id=None,contact_name=None):
+        self.diagnostics=[]
+        self.profile_id=str(profile_id or settings.kufar_profile_id)
+        self.contact_name=settings.kufar_contact_person if contact_name is None and profile_id is None else contact_name
     async def collect(self,max_pages=100):
-        params={'atid':settings.kufar_profile_id,'lang':'ru','size':'45','typ':'sell','prn':'1000','sort':'lst.d'}
+        params={'atid':self.profile_id,'lang':'ru','size':'45','typ':'sell','prn':'1000','sort':'lst.d'}
         found={}
         cursor=None
         api_total=0
@@ -121,7 +124,7 @@ class KufarCollector:
                 api_total=data.get('total') or api_total
                 ads=data.get('ads') or []
                 for d in ads:
-                    x=parse_ad_dict(d,settings.kufar_profile_id)
+                    x=parse_ad_dict(d,self.profile_id)
                     if x: found[x.ad_id]=x
                 self.diagnostics.append((str(r.url),'GET',r.status_code,r.headers.get('content-type',''),f'page={page_no};ads={len(ads)};total_seen={len(found)};api_total={data.get("total")}'))
                 nxt=None
@@ -145,7 +148,7 @@ class KufarCollector:
                         data=r.json()
                         ads=data.get('ads') or []
                         for d in ads:
-                            x=parse_ad_dict(d,settings.kufar_profile_id)
+                            x=parse_ad_dict(d,self.profile_id)
                             if x: found[x.ad_id]=x
                         self.diagnostics.append((str(r.url),'GET',r.status_code,r.headers.get('content-type',''),f'oldest_pass={page_no};ads={len(ads)};total_seen={len(found)};api_total={data.get("total")}'))
                         if len(found)>=api_total: break
@@ -157,7 +160,11 @@ class KufarCollector:
                 except Exception as e:
                     self.diagnostics.append(('oldest-pass','GET',None,'',f'ignored error: {e!r}'))
 
-        return [x for x in found.values() if contact_person(x).casefold()==settings.kufar_contact_person.casefold()]
+        items=list(found.values())
+        if self.contact_name:
+            expected=str(self.contact_name).casefold()
+            items=[x for x in items if contact_person(x).casefold()==expected]
+        return items
 
 async def screenshot_ad(url,path):
     async with async_playwright() as p:

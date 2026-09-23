@@ -3,7 +3,7 @@ import html, re
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import urljoin, urlparse
-from .config import settings
+from .config import settings, KUFAR_PROFILES
 from .d1 import D1
 from .telegram import Telegram
 from .collectors.kufar import KufarCollector
@@ -72,6 +72,11 @@ HOUSE_NAMES={
 }
 
 FRESH_SCOPE_STATE='fresh_scope_v3_applied'
+
+PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
+
+def profile_label(profile_id):
+    return PROFILE_LABELS.get(str(profile_id),f'Профиль {profile_id}')
 
 def fmt_num(v, decimals=2):
     if v is None: return '—'
@@ -283,7 +288,7 @@ def fmt_event_group(db,events,k):
     else:
         parts=["🔴 **НЕСКОЛЬКО РАСХОЖДЕНИЙ**"]
 
-    parts.append('')
+    parts += ['',f"👤 **{profile_label(k.profile_id)}**"]
     parts += object_identity_lines(
       card_house_label(b) or building,address,b.get('unit_no'),
       k.rooms,k.area,k.floor,omit_fields=set(fields)
@@ -339,19 +344,29 @@ async def collect_bir(db,force=False):
     db.set_state('last_bir_count',str(len(items)))
     return True
 
-async def collect_kufar(db):
-    rows=db.query('SELECT COUNT(*) AS n FROM kufar_ads WHERE active=1 AND profile_id=?',[settings.kufar_profile_id])
+async def collect_kufar(db,profile):
+    profile_id=profile['id']
+    rows=db.query('SELECT COUNT(*) AS n FROM kufar_ads WHERE active=1 AND profile_id=?',[profile_id])
     previous_active=int(rows[0]['n']) if rows else 0
-    c=KufarCollector(); items=await c.collect(); save_diag(db,'kufar',c.diagnostics)
-    changed=save_kufar(db,items,settings.kufar_profile_id)
+    c=KufarCollector(profile_id,profile.get('contact_person'))
+    items=await c.collect(); save_diag(db,f'kufar:{profile_id}',c.diagnostics)
+    changed=save_kufar(db,items,profile_id)
     db.set_state('last_kufar_success',datetime.now(timezone.utc).isoformat())
-    db.set_state('last_kufar_count',str(len(items)))
+    db.set_state(f'last_kufar_count:{profile_id}',str(len(items)))
     return items,changed,previous_active
 
-def choose_audit_targets(items,changed,previous_active):
+def listing_is_today(item,local_now=None):
+    local_now=local_now or datetime.now(MINSK)
+    dt=parse_any_ts((item.raw or {}).get('list_time'))
+    return bool(dt and dt.astimezone(MINSK).date()==local_now.astimezone(MINSK).date())
+
+def choose_audit_targets(items,changed,previous_active,audit_today_on_baseline=False,local_now=None):
     total=len(items)
     if not total: return [],'empty_snapshot'
     if previous_active<max(20,int(total*0.50)):
+        if audit_today_on_baseline:
+            fresh=[item for item in changed if listing_is_today(item,local_now)]
+            return fresh,'baseline_today_only'
         return [],'baseline_only'
     if len(changed)>max(25,int(total*0.10)):
         return [],'bulk_rebaseline'
@@ -465,7 +480,7 @@ def process_updates(db,tg):
 
 def summary_rows(db):
     return db.query(
-      '''SELECT e.*, k.url, k.address, k.area, k.rooms, k.floor,
+      '''SELECT e.*, k.profile_id, k.url, k.address, k.area, k.rooms, k.floor,
                 k.raw_json AS kufar_raw_json,
                 b.building_name, b.official_address, b.unit_no,
                 b.raw_json AS bir_raw_json
@@ -481,7 +496,10 @@ def summary_card(r,bir_checked_at=None):
     field=r.get('field_name')
     building=card_house_label(r)
     address=r.get('address') or r.get('official_address')
-    parts=[f"🔴 **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**",'']
+    parts=[
+      f"🔴 **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**",'',
+      f"👤 **{profile_label(r.get('profile_id'))}**"
+    ]
     parts += object_identity_lines(
       building,address,r.get('unit_no'),r.get('rooms'),r.get('area'),r.get('floor'),
       omit_fields={field}
@@ -522,6 +540,15 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None):
         for field in ['price','area','rooms','floor','address','existence']:
             if counts.get(field):
                 parts.append(f"{FIELD_ICONS.get(field,'⚠️')} {FIELD_LABELS.get(field,field)} — {counts[field]}")
+        people={}
+        for r in rows:
+            profile_id=r.get('profile_id')
+            if profile_id:
+                people[profile_id]=people.get(profile_id,0)+1
+        if people:
+            parts.append('')
+            for profile_id,count in people.items():
+                parts.append(f"👤 {profile_label(profile_id)} — {count}")
     checked=parse_any_ts(bir_checked_at)
     if checked:
         parts += ['',f"Проверка завершена в {checked.astimezone(MINSK).strftime('%H:%M')}"]
@@ -580,20 +607,32 @@ async def run():
             print(f'TELEGRAM_INVITE_ERROR type={type(exc).__name__} detail={exc}')
 
     bir_changed=await collect_bir(db,force=bool(force_chats))
-    items,changed,previous_active=await collect_kufar(db)
-    targets,selection_mode=choose_audit_targets(items,changed,previous_active)
+    profile_runs=[]; targets=[]
+    for profile in KUFAR_PROFILES:
+        items,changed,previous_active=await collect_kufar(db,profile)
+        selected,selection_mode=choose_audit_targets(
+          items,changed,previous_active,
+          audit_today_on_baseline=profile.get('audit_today_on_baseline',False),
+          local_now=datetime.now(MINSK)
+        )
+        targets.extend(selected)
+        profile_runs.append({
+          'id':profile['id'],'label':profile['label'],'items':len(items),
+          'changed':len(changed),'previous_active':previous_active,
+          'targets':len(selected),'mode':selection_mode,
+        })
     archived_legacy_events=archive_legacy_events_once(db)
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
     print(
-      f"RADAR_INPUT bir_refreshed={bir_changed} kufar_alena={len(items)} previous_active={previous_active} "
-      f"changed={len(changed)} targets={len(targets)} selection_mode={selection_mode} "
+      f"RADAR_INPUT bir_refreshed={bir_changed} profiles={profile_runs} targets={len(targets)} "
       f"archived_legacy_events={archived_legacy_events} "
       f"rounded_area_events_closed={rounded_area_events_closed} "
     )
 
-    # Only incremental NEW/EDITED/REAPPEARED cards are audited. A first or
-    # suspiciously large snapshot becomes a silent baseline instead.
+    # Existing profiles audit only incremental NEW/EDITED/REAPPEARED cards.
+    # A newly added profile seeds old history silently but still audits rows
+    # whose Kufar publication/update time is today in Minsk.
     session=AuditSession(db)
     all_new=[]
     for k in targets:

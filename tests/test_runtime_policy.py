@@ -6,8 +6,9 @@ from radar.main import (
     summary_line, summary_overview, summary_link_keyboard, telegram_html,
     bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, add_subscriber, consume_invite, process_updates,
-    SUBSCRIBERS_STATE, INVITE_TOKEN_STATE
+    SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label
 )
+from radar.models import KufarListing
 
 MINSK=ZoneInfo('Europe/Minsk')
 
@@ -29,6 +30,22 @@ def test_first_snapshot_is_silent_baseline():
     targets,mode=choose_audit_targets(items,changed,0)
     assert targets==[]
     assert mode=='baseline_only'
+
+def test_new_profile_baseline_audits_only_listings_touched_today():
+    today=KufarListing(
+      ad_id='1',url='x',profile_id='11077002',
+      raw={'list_time':'2026-09-23T05:04:51Z'}
+    )
+    old=KufarListing(
+      ad_id='2',url='y',profile_id='11077002',
+      raw={'list_time':'2026-09-22T20:59:59Z'}
+    )
+    targets,mode=choose_audit_targets(
+      [today,old],[today,old],0,audit_today_on_baseline=True,
+      local_now=datetime(2026,9,23,9,0,tzinfo=MINSK)
+    )
+    assert targets==[today]
+    assert mode=='baseline_today_only'
 
 def test_suspicious_bulk_change_is_silent_rebaseline():
     items=list(range(1848)); changed=list(range(1846))
@@ -113,6 +130,7 @@ def test_event_time_is_shown_in_minsk_time():
 def test_summary_shows_kufar_and_detection_times():
     row={
       'field_name':'price','new_value':'45000',
+      'profile_id':'11077002',
       'bir_value':json.dumps({'regular':47000,'fast':46000}),
       'building_name':'11.2','address':'Игоря Лученка ул, 22, Минск',
       'unit_no':'4.47','rooms':1,'area':29.6,'floor':4,
@@ -123,6 +141,7 @@ def test_summary_shows_kufar_and_detection_times():
     }
     out=summary_line(row,'2026-09-21T05:20:00Z')
     assert '🔴 **НЕ СОВПАДАЕТ ЦЕНА**' in out
+    assert '👤 **Ирина Барашенко**' in out
     assert '🏢 **Медитераниан · дом 11.2**' in out
     assert '🚪 Помещение № 4.47 · 1-комн. · 29,60 м² · 4 этаж' in out
     assert '**Kufar: 45 000 €**' in out
@@ -139,7 +158,10 @@ def test_summary_shows_kufar_and_detection_times():
     assert '**' not in rendered
 
 def test_morning_overview_is_short_and_scannable():
-    rows=[{'field_name':'area'},{'field_name':'floor'}]
+    rows=[
+      {'field_name':'area','profile_id':'11093294'},
+      {'field_name':'floor','profile_id':'11077002'},
+    ]
     out=summary_overview(
       rows,'2026-09-22T05:02:00Z',mode='morning',
       local_now=datetime(2026,9,22,8,2,tzinfo=MINSK)
@@ -148,5 +170,12 @@ def test_morning_overview_is_short_and_scannable():
     assert '⚠️ **Найдено расхождений: 2**' in out
     assert '📐 Площадь — 1' in out
     assert '🏢 Этаж — 1' in out
+    assert '👤 Алёна Довгун — 1' in out
+    assert '👤 Ирина Барашенко — 1' in out
     assert 'Проверка завершена в 08:02' in out
     assert 'Управление радаром' not in out
+
+def test_profile_labels_use_confirmed_kufar_ids():
+    assert profile_label('11093294')=='Алёна Довгун'
+    assert profile_label('11077002')=='Ирина Барашенко'
+    assert profile_label('11080367')=='Хатковская'

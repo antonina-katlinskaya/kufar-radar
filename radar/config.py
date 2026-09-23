@@ -1,6 +1,27 @@
 from dataclasses import dataclass
 import os
 
+KUFAR_PROFILES=(
+    {
+      'id':'11093294',
+      'label':'Алёна Довгун',
+      'contact_person':'Алёна',
+      'audit_today_on_baseline':False,
+    },
+    {
+      'id':'11077002',
+      'label':'Ирина Барашенко',
+      'contact_person':'Ирина Барашенко',
+      'audit_today_on_baseline':True,
+    },
+    {
+      'id':'11080367',
+      'label':'Хатковская',
+      'contact_person':None,
+      'audit_today_on_baseline':True,
+    },
+)
+
 @dataclass(frozen=True)
 class Settings:
     kufar_profile_id: str = os.getenv('KUFAR_PROFILE_ID', '11093294')
