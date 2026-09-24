@@ -1,6 +1,8 @@
 from radar.models import KufarListing,BirListing
 from radar.house_directory import directory_address,resolved_bir_address
-from radar.matcher import area_close,match_new,mismatch_map,round_area_1,vector
+from radar.matcher import (
+    apply_mismatch_policy,area_close,match_new,mismatch_map,round_area_1,vector
+)
 
 def b(key='x',area=30.41,price=43669,rooms=1,floor=2,address='Игоря Лученка, 22'):
     return BirListing(key,'Mediterranean',address,'239',50177,price,area,rooms,floor,{})
@@ -64,3 +66,24 @@ def test_missing_bir_address_accepts_correct_directory_address():
     r=match_new(k(address='Игоря Лученка ул, 22, Минск'),[item])
     assert r.obj is not None
     assert 'address' not in r.mismatches
+
+def test_floor_only_difference_is_suppressed_when_everything_else_matches():
+    item=b(floor=3)
+    listing=k(floor=4,area=30.4,address='Игоря Лученка ул, 22, Минск')
+    mismatches=mismatch_map(listing,item)
+    assert mismatches=={'floor':(4,3)}
+    assert apply_mismatch_policy(listing,item,mismatches)=={}
+
+def test_floor_difference_remains_when_any_other_field_differs():
+    item=b(floor=3)
+    listing=k(floor=4,rooms=2,area=30.4,address='Игоря Лученка ул, 22, Минск')
+    mismatches=mismatch_map(listing,item)
+    assert set(mismatches)=={'floor','rooms'}
+    assert apply_mismatch_policy(listing,item,mismatches)==mismatches
+
+def test_floor_difference_remains_without_concrete_bir_unit_number():
+    item=b(floor=3)
+    item.unit_no=None
+    listing=k(floor=4,area=30.4,address='Игоря Лученка ул, 22, Минск')
+    mismatches=mismatch_map(listing,item)
+    assert apply_mismatch_policy(listing,item,mismatches)==mismatches
