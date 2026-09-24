@@ -6,7 +6,7 @@ from radar.main import (
     include_active_event_targets, enqueue_pending_audits,
     summary_line, summary_overview, summary_link_keyboard, telegram_html,
     bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
-    subscribed_chat_ids, add_subscriber, consume_invite, process_updates,
+    subscribed_chat_ids, automatic_chat_ids, add_subscriber, consume_invite, process_updates,
     SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
     split_mass_records, actionable_event_records, reliable_today_version_ad_ids,
 )
@@ -141,6 +141,14 @@ def test_invite_adds_second_subscriber_once():
     assert json.loads(db.state[SUBSCRIBERS_STATE])==['100','200']
     assert db.state[INVITE_TOKEN_STATE]==''
     assert not consume_invite(db,'300','secret-link')
+
+def test_automatic_alerts_go_only_to_owner():
+    db=FakeDB({
+      'telegram_chat_id':'100',
+      SUBSCRIBERS_STATE:json.dumps(['100','200']),
+    })
+    assert subscribed_chat_ids(db)==['100','200']
+    assert automatic_chat_ids(db)==['100']
 
 def test_sister_start_gets_keyboard_and_current_summary_request():
     db=FakeDB({'telegram_chat_id':'100',INVITE_TOKEN_STATE:'secret-link'})

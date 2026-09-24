@@ -177,6 +177,15 @@ def subscribed_chat_ids(db):
     except: pass
     return list(dict.fromkeys(values))
 
+def automatic_chat_ids(db):
+    """Automatic summaries and alerts go only to the bot owner.
+
+    Other invited subscribers keep access to the persistent button and receive
+    a report only when they request it themselves.
+    """
+    owner=db.get_state('telegram_chat_id')
+    return [str(owner)] if owner else []
+
 def add_subscriber(db,chat_id):
     chat_id=str(chat_id)
     values=subscribed_chat_ids(db)
@@ -747,9 +756,9 @@ def should_send_morning_summary(db,local_now):
 async def run():
     db=D1(); tg=Telegram()
     force_chats,show_chats,joined_chats=process_updates(db,tg)
-    chats=subscribed_chat_ids(db)
+    auto_chats=automatic_chat_ids(db)
     owner=db.get_state('telegram_chat_id')
-    install_keyboard=bool(chats and db.get_state(KEYBOARD_STATE,'')!='1')
+    install_keyboard=bool(auto_chats and db.get_state(KEYBOARD_STATE,'')!='1')
 
     if owner and db.get_state(INVITE_NOTICE_STATE,'')!='1':
         try:
@@ -853,19 +862,19 @@ async def run():
 
     local_now=datetime.now(MINSK)
     morning=False
-    if chats and should_send_morning_summary(db,local_now):
+    if auto_chats and should_send_morning_summary(db,local_now):
         sent=False
-        for chat in chats:
+        for chat in auto_chats:
             sent=safe_state_summary(db,tg,chat,keyboard=True,mode='morning') or sent
         if sent:
             db.set_state('morning_summary_date',local_now.date().isoformat())
             morning=True
 
-    if chats and should_live_notify(local_now) and not morning:
+    if auto_chats and should_live_notify(local_now) and not morning:
         actionable_new=actionable_event_records(all_new)
         mass,single_records=split_mass_records(actionable_new)
         for field,profile_id,records in mass:
-            for chat in chats:
+            for chat in auto_chats:
                 safe_send(
                   tg,chat,telegram_html(fmt_mass_event_group(field,profile_id,records)),
                   parse_mode='HTML'
@@ -874,7 +883,7 @@ async def run():
         for e,k in single_records:
             grouped.setdefault(k.ad_id,{'k':k,'events':[]})['events'].append(e)
         for item in grouped.values():
-            for chat in chats:
+            for chat in auto_chats:
                 safe_send(
                   tg,chat,telegram_html(fmt_event_group(db,item['events'],item['k'])),
                   keyboard=event_link_keyboard(db,item['events'][0],item['k']),parse_mode='HTML'
@@ -886,9 +895,9 @@ async def run():
     for chat in force_chats|joined_chats:
         safe_state_summary(db,tg,chat,keyboard=True)
 
-    if chats and install_keyboard and not morning and not force_chats and not show_chats and not joined_chats:
+    if auto_chats and install_keyboard and not morning and not force_chats and not show_chats and not joined_chats:
         restored=False
-        for chat in chats:
+        for chat in auto_chats:
             restored=safe_send(
               tg,chat,
               '🔄 Кнопка «Проверить сейчас» снова закреплена внизу чата.',
