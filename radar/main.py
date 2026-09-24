@@ -15,7 +15,8 @@ from .matcher import area_close
 MINSK=ZoneInfo('Europe/Minsk')
 CHECK_BUTTON='🔄 Проверить сейчас'
 MAIN_KEYBOARD=[[CHECK_BUTTON]]
-KEYBOARD_STATE='telegram_main_keyboard_v4_sent'
+# Versioned state deliberately forces a one-time owner-only keyboard restore.
+KEYBOARD_STATE='telegram_main_keyboard_v5_owner_only_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
