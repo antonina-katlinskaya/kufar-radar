@@ -1,5 +1,6 @@
 from radar.models import KufarListing,BirListing
-from radar.matcher import area_close,match_new,mismatch_map,round_area_1
+from radar.house_directory import directory_address,resolved_bir_address
+from radar.matcher import area_close,match_new,mismatch_map,round_area_1,vector
 
 def b(key='x',area=30.41,price=43669,rooms=1,floor=2,address='Игоря Лученка, 22'):
     return BirListing(key,'Mediterranean',address,'239',50177,price,area,rooms,floor,{})
@@ -33,3 +34,33 @@ def test_room_change_is_mismatch():
 
 def test_ambiguous_does_not_accuse():
     r=match_new(k(area=30.41),[b('a'),b('b')]); assert r.obj is None; assert r.confidence=='AMBIGUOUS'
+
+def test_house_directory_resolves_mediteranian_by_slug_or_building_number():
+    expected='Игоря Лученка ул, 22, Минск'
+    assert directory_address('11.2','/dom-mediteranian/')==expected
+    assert directory_address('Дом 11,2',None)==expected
+
+def test_bir_address_has_priority_over_directory():
+    item=b(address='Адрес непосредственно из BIR')
+    item.raw={'house_href':'/dom-mediteranian/'}
+    assert resolved_bir_address(item)=='Адрес непосредственно из BIR'
+
+def test_missing_bir_address_uses_directory_and_flags_wrong_kufar_address():
+    item=b(address=None)
+    item.building_name='11.2'
+    item.raw={'house_href':'/dom-mediteranian/','gps':'53.864246, 27.545867'}
+    listing=k(address='Братская ул, Минск')
+    v=vector(listing,item)
+    assert v['address'] is False
+    assert v['location'] is None
+    assert mismatch_map(listing,item)['address']==(
+        'Братская ул, Минск','Игоря Лученка ул, 22, Минск'
+    )
+
+def test_missing_bir_address_accepts_correct_directory_address():
+    item=b(address=None)
+    item.building_name='11.2'
+    item.raw={'house_href':'/dom-mediteranian/'}
+    r=match_new(k(address='Игоря Лученка ул, 22, Минск'),[item])
+    assert r.obj is not None
+    assert 'address' not in r.mismatches
