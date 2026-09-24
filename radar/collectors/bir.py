@@ -2,6 +2,7 @@ import re
 from urllib.parse import urlencode
 from playwright.async_api import async_playwright
 from ..config import settings
+from ..house_directory import directory_address
 from ..models import BirListing
 
 ROOM_FILTERS=[('1-room',1),('2-room',2),('3-room',3),('4-room',4),('5-room',5)]
@@ -49,10 +50,13 @@ async def _parse_html(page, html, rooms):
         unit=t[2]; floor=_int(t[3]); area=_num(t[4])
         if floor is None or area is None: continue
         object_key=r.get('object_id') or f"{r.get('building')}|{unit}|{floor}|{area}"
+        official_address=(r.get('address') or None) or directory_address(
+          r.get('building'),r.get('house_href')
+        )
         out.append(BirListing(
           object_key=object_key,
           building_name=(r.get('building') or None),
-          official_address=(r.get('address') or None),
+          official_address=official_address,
           unit_no=str(unit),
           price_regular_eur=_num(r.get('regular_eur')),
           price_fast_eur=_num(r.get('fast_eur')),
