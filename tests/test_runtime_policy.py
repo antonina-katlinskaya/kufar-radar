@@ -160,6 +160,7 @@ def test_sister_start_gets_keyboard_and_current_summary_request():
     assert force==set() and show==set() and joined=={'200'}
     assert subscribed_chat_ids(db)==['100','200']
     assert tg.sent[0][2]['reply_keyboard']==MAIN_KEYBOARD
+    assert 'Автоматические уведомления получает владелец' in tg.sent[0][1]
 
 def test_manual_check_responds_to_requesting_subscriber():
     db=FakeDB({
