@@ -2,6 +2,12 @@ name: Radar
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'radar/**'
+      - 'requirements.txt'
+      - '.github/workflows/radar.yml'
 
 permissions:
   contents: read
