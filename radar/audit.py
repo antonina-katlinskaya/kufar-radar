@@ -1,5 +1,5 @@
 import json
-from .matcher import match_new
+from .matcher import apply_mismatch_policy, match_new
 from .store import fp, now, current_bir, inactive_bir
 from .collectors.kufar import is_mw_claimed
 from .config import settings
@@ -18,6 +18,7 @@ class AuditSession:
         r=match_new(k,self.candidates)
 
         if r.obj:
+            mismatches=apply_mismatch_policy(k,r.obj,r.mismatches)
             if r.confidence in {'EXACT','HIGH'}:
                 ts=now()
                 self.statements.append((
@@ -27,12 +28,12 @@ class AuditSession:
                   [k.ad_id,r.obj.object_key,r.confidence,r.reason,ts]
                 ))
             return {
-              'status':'MISMATCH' if r.mismatches else 'OK',
+              'status':'MISMATCH' if mismatches else 'OK',
               'ad_id':k.ad_id,
               'object_key':r.obj.object_key,
               'confidence':r.confidence,
               'reason':r.reason,
-              'mismatches':r.mismatches
+              'mismatches':mismatches
             }
 
         if not is_mw_claimed(k):
