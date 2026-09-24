@@ -291,6 +291,13 @@ def comparison_lines(row,include_label=False):
         parts += ["**Автоматически сопоставить квартиру не удалось**",f"Причина: {row.get('bir_value') or 'недостаточно данных'}"]
     return parts
 
+def probable_event(row):
+    return row.get('event_type')=='PROBABLE_MISMATCH'
+
+def display_card_title(field,probable=False):
+    title=CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')
+    return f'ВЕРОЯТНО: {title}' if probable else title
+
 def event_context(db,e,k):
     b={}
     key=e.get('object_key')
@@ -309,12 +316,13 @@ def fmt_event_group(db,events,k):
     b,building,address=event_context(db,first,k)
     fields={e['field_name']:e for e in events}
 
-    marker='🟡' if set(fields)=={'review'} else '🔴'
+    all_probable=bool(events) and all(probable_event(event) for event in events)
+    marker='🟡' if set(fields)=={'review'} else ('🟠' if all_probable else '🔴')
     if len(fields)==1:
         field=next(iter(fields))
-        parts=[f"{marker} **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**"]
+        parts=[f"{marker} **{display_card_title(field,all_probable)}**"]
     else:
-        parts=["🔴 **НЕСКОЛЬКО РАСХОЖДЕНИЙ**"]
+        parts=[f"{marker} **{'ВЕРОЯТНЫЕ РАСХОЖДЕНИЯ' if all_probable else 'НЕСКОЛЬКО РАСХОЖДЕНИЙ'}**"]
 
     parts += ['',f"👤 **{profile_label(k.profile_id)}**"]
     parts += object_identity_lines(
@@ -357,9 +365,10 @@ def compact_comparison(row):
     return str(row.get('bir_value') or 'нужна проверка')
 
 def fmt_mass_event_group(field,profile_id,records):
-    marker='🟡' if field=='review' else '🔴'
+    all_probable=bool(records) and all(probable_event(row) for row,_ in records)
+    marker='🟡' if field=='review' else ('🟠' if all_probable else '🔴')
     parts=[
-      f"{marker} **{CARD_TITLES.get(field,'НАЙДЕНЫ РАСХОЖДЕНИЯ')} — {len(records)}**",'',
+      f"{marker} **{display_card_title(field,all_probable)} — {len(records)}**",'',
       f"👤 **{profile_label(profile_id)}**",
       'Однотипные изменения собраны в одно уведомление:',
     ]
@@ -638,10 +647,11 @@ def service_event_counts(db):
 
 def summary_card(r,bir_checked_at=None):
     field=r.get('field_name')
+    probable=probable_event(r)
     building=card_house_label(r)
     address=r.get('address') or r.get('official_address')
     parts=[
-      f"{'🟡' if field=='review' else '🔴'} **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**",'',
+      f"{'🟡' if field=='review' else ('🟠' if probable else '🔴')} **{display_card_title(field,probable)}**",'',
       f"👤 **{profile_label(r.get('profile_id'))}**"
     ]
     parts += object_identity_lines(

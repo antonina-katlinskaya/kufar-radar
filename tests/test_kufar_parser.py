@@ -4,6 +4,7 @@ def test_real_kufar_shape():
     d={
       'adId':'1085820441','adViewLink':'https://re.kufar.by/vi/x/1085820441',
       'address':'Игоря Лученка ул, 22, Минск','title':'Mediterranean',
+      'image':{'image_id':'cover-123'},
       'adParams':{
         'rooms':{'v':'1'},'size':{'v':30.4},'floor':{'v':[2]},
         'reDistrict':{'vl':'Минск-Мир'},
@@ -22,6 +23,7 @@ def test_real_kufar_shape():
     assert x.rooms==1
     assert x.floor==2
     assert x.address.startswith('Игоря Лученка')
+    assert x.raw['primary_image_id']=='cover-123'
     assert contact_person(x)=='Алёна'
 
 def test_collector_can_target_an_individual_profile_without_name_filter():

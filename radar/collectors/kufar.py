@@ -60,6 +60,19 @@ def _calculator_price(ad,currency):
             except: return None
     return None
 
+def _primary_image_id(ad):
+    image=ad.get('image') or ad.get('main_image') or ad.get('mainImage') or {}
+    if isinstance(image,dict):
+        value=image.get('image_id',image.get('imageId',image.get('id')))
+        if value is not None: return str(value)
+    images=ad.get('images') or []
+    if isinstance(images,list) and images:
+        first=images[0]
+        if isinstance(first,dict):
+            value=first.get('image_id',first.get('imageId',first.get('id')))
+            if value is not None: return str(value)
+    return None
+
 def parse_ad_dict(d:dict[str,Any], profile_id:str):
     aid=d.get('ad_id',d.get('adId'))
     if aid is None: return None
@@ -74,6 +87,7 @@ def parse_ad_dict(d:dict[str,Any], profile_id:str):
       'ad_link':url,
       'list_time':d.get('list_time',d.get('date')),
       'subject':title,
+      'primary_image_id':_primary_image_id(d),
       'currency':d.get('currency'),
       'price_byn':d.get('price_byn'),
       'calculator':d.get('calculator') or [],

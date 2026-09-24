@@ -1,9 +1,51 @@
 import json
-from .matcher import apply_mismatch_policy, match_for_audit_field, match_new, vector
+from .matcher import (
+    apply_mismatch_policy,match_for_audit_field,match_new,mismatch_map,vector
+)
 from .house_directory import resolved_bir_address
 from .store import fp, now, current_bir, inactive_bir
 from .collectors.kufar import is_mw_claimed
 from .config import settings
+
+TRUSTED_PASSPORT_CONFIDENCE={'EXACT','HIGH'}
+
+def _same_value(a,b):
+    if a is None or b is None:
+        return a is b
+    try:
+        return float(a)==float(b)
+    except (TypeError,ValueError):
+        return str(a).strip().casefold()==str(b).strip().casefold()
+
+def _raw_dict(value):
+    if isinstance(value,dict): return value
+    try:
+        parsed=json.loads(value or '{}')
+        return parsed if isinstance(parsed,dict) else {}
+    except (TypeError,ValueError):
+        return {}
+
+def _primary_image_id(version):
+    return _raw_dict((version or {}).get('raw_json')).get('primary_image_id')
+
+def listing_replaced(recent_versions):
+    """Detect a real card repurpose without treating address/price edits as identity changes."""
+    if len(recent_versions or [])<2:
+        return False
+    latest,previous=recent_versions[0],recent_versions[1]
+    core_changes=sum(
+      not _same_value(latest.get(field),previous.get(field))
+      for field in ('area','rooms','floor')
+    )
+    if core_changes>=2:
+        return True
+    title_changed=not _same_value(latest.get('title'),previous.get('title'))
+    latest_image=_primary_image_id(latest)
+    previous_image=_primary_image_id(previous)
+    image_changed=bool(
+      latest_image and previous_image and latest_image!=previous_image
+    )
+    return core_changes>=1 and title_changed and image_changed
 
 class AuditSession:
     def __init__(self, db, ad_ids=None):
@@ -14,16 +56,33 @@ class AuditSession:
         for r in db.query('SELECT * FROM events WHERE active=1 AND occurred_at >= ?',[settings.live_cutoff_utc]):
             self.active.setdefault(r['ad_id'],{})[r['field_name']]=r
         self.preferred={}
+        self.passport_confidence={}
+        self.passport_updated_at={}
+        self.recent_versions={}
         wanted=list(dict.fromkeys(str(ad_id) for ad_id in (ad_ids or [])))
         if wanted:
             for i in range(0,len(wanted),75):
                 chunk=wanted[i:i+75]
                 marks=','.join('?' for _ in chunk)
                 for r in db.query(
-                  f'SELECT ad_id,object_key FROM matches WHERE ad_id IN ({marks})',chunk
+                  f'''SELECT ad_id,object_key,confidence,updated_at
+                      FROM matches WHERE ad_id IN ({marks})''',chunk
                 ):
                     if r.get('ad_id') is not None and r.get('object_key') is not None:
-                        self.preferred[str(r['ad_id'])]=str(r['object_key'])
+                        ad_id=str(r['ad_id'])
+                        self.preferred[ad_id]=str(r['object_key'])
+                        self.passport_confidence[ad_id]=str(r.get('confidence') or '')
+                        self.passport_updated_at[ad_id]=r.get('updated_at')
+                version_rows=db.query(
+                  f'''SELECT * FROM (
+                        SELECT v.*, ROW_NUMBER() OVER (
+                          PARTITION BY ad_id ORDER BY id DESC
+                        ) AS recent_rank
+                        FROM kufar_versions v WHERE ad_id IN ({marks})
+                      ) WHERE recent_rank<=2 ORDER BY ad_id,recent_rank''',chunk
+                )
+                for row in version_rows:
+                    self.recent_versions.setdefault(str(row['ad_id']),[]).append(row)
         self.statements=[]
 
     def remember_match(self,k,obj,confidence,reason):
@@ -37,16 +96,98 @@ class AuditSession:
           [k.ad_id,obj.object_key,confidence,reason,ts]
         ))
         self.preferred[k.ad_id]=obj.object_key
+        self.passport_confidence[k.ad_id]=confidence
+        self.passport_updated_at[k.ad_id]=ts
+
+    def forget_match(self,ad_id,reason):
+        self.statements.append(('DELETE FROM matches WHERE ad_id=?',[ad_id]))
+        self.preferred.pop(ad_id,None)
+        self.passport_confidence.pop(ad_id,None)
+        self.passport_updated_at.pop(ad_id,None)
+        return reason
+
+    def passport_predates_latest_version(self,ad_id):
+        versions=getattr(self,'recent_versions',{}).get(ad_id,[])
+        if not versions:
+            return False
+        latest_at=versions[0].get('observed_at')
+        matched_at=getattr(self,'passport_updated_at',{}).get(ad_id)
+        if not latest_at or not matched_at:
+            return True
+        return str(latest_at)>str(matched_at)
 
     def audit(self,k):
         r=match_new(k,self.candidates)
 
         preferred=self.preferred.get(k.ad_id)
+        trusted=(
+          preferred is not None and
+          getattr(self,'passport_confidence',{}).get(k.ad_id) in TRUSTED_PASSPORT_CONFIDENCE
+        )
+        replacement_reason=None
+        if (
+          trusted and self.passport_predates_latest_version(k.ad_id) and
+          listing_replaced(getattr(self,'recent_versions',{}).get(k.ad_id,[]))
+        ):
+            replacement_reason=self.forget_match(
+              k.ad_id,'Kufar card identity changed; previous BIR passport discarded'
+            )
+            preferred=None; trusted=False
+
+        passport_obj=next(
+          (obj for obj in self.candidates if trusted and obj.object_key==preferred),None
+        )
         independent={
-          field:match_for_audit_field(k,self.candidates,field,preferred)
+          field:match_for_audit_field(
+            k,self.candidates,field,preferred if passport_obj else None
+          )
           for field in ('price','area')
         }
         mismatches={}; object_keys={}; reasons=[]
+
+        # If both independent audits identify the same *different* object, the
+        # old Kufar ID has been repurposed even when rooms/floor happen to match.
+        independent_objects=[result.obj for result in independent.values() if result.obj]
+        strong_new_object=(
+          passport_obj and r.obj and r.confidence in {'EXACT','HIGH'} and
+          r.obj.object_key!=passport_obj.object_key
+        )
+        independent_new_object=False
+        if passport_obj and len(independent_objects)==2:
+            new_keys={obj.object_key for obj in independent_objects}
+            independent_new_object=(
+              len(new_keys)==1 and passport_obj.object_key not in new_keys
+            )
+        if passport_obj and (strong_new_object or independent_new_object):
+            replacement_reason=self.forget_match(
+              k.ad_id,'Current card confidently identifies a new BIR object'
+            )
+            passport_obj=None; preferred=None; trusted=False
+
+        if replacement_reason:
+            reasons.append(replacement_reason)
+
+        # A trusted passport is the primary identity source. Address changes do
+        # not break it; price/area are compared directly with the same BIR unit.
+        if passport_obj:
+            passport_mismatches=apply_mismatch_policy(
+              k,passport_obj,mismatch_map(k,passport_obj)
+            )
+            for field,value in passport_mismatches.items():
+                mismatches[field]=value
+                object_keys[field]=passport_obj.object_key
+            reasons.append('Trusted Kufar-to-BIR object passport')
+            if mismatches:
+                return {
+                  'status':'MISMATCH','ad_id':k.ad_id,
+                  'object_key':passport_obj.object_key,'object_keys':object_keys,
+                  'confidence':'PASSPORT','reason':'; '.join(reasons),
+                  'mismatches':mismatches
+                }
+            return {
+              'status':'OK','ad_id':k.ad_id,'object_key':passport_obj.object_key,
+              'confidence':'PASSPORT','reason':'; '.join(reasons),'mismatches':{}
+            }
 
         # Keep address/floor/rooms as internal evidence, but never let the general
         # matcher alone create a price or area accusation.
@@ -95,15 +236,21 @@ class AuditSession:
             matched_obj=next(iter(identified.values()),None) or r.obj or r.reference
         if r.obj and r.confidence in {'EXACT','HIGH'}:
             self.remember_match(k,r.obj,r.confidence,r.reason)
-        elif matched_obj and not identity_conflict and identity_keys:
-            self.remember_match(
-              k,matched_obj,'FIELD_HIGH',
-              '; '.join(result.reason for result in independent.values() if result.obj)
-            )
 
         if mismatches:
+            actionable={field for field in mismatches if field in {'price','area'}}
+            confirmed_by_general_match={
+              field for field in actionable
+              if r.obj and r.confidence in {'EXACT','HIGH'} and
+              object_keys.get(field)==r.obj.object_key
+            }
+            status=(
+              'REVIEW' if set(mismatches)=={'review'} else
+              'PROBABLE' if actionable-confirmed_by_general_match else
+              'MISMATCH'
+            )
             return {
-              'status':'REVIEW' if set(mismatches)=={'review'} else 'MISMATCH',
+              'status':status,
               'ad_id':k.ad_id,
               'object_key':matched_obj.object_key if matched_obj else None,
               'object_keys':object_keys,
@@ -163,9 +310,13 @@ class AuditSession:
 
         if status=='NO_BIR_OBJECT':
             desired['existence']=('active Kufar','no matching current Bir object','NO_BIR_OBJECT')
-        elif status=='MISMATCH':
+        elif status in {'MISMATCH','PROBABLE'}:
+            mismatch_type='PROBABLE_MISMATCH' if status=='PROBABLE' else 'NEW_MISMATCH'
             for field,(a,b) in mism.items():
-                desired[field]=(str(a),json.dumps(b,ensure_ascii=False) if isinstance(b,(dict,list)) else str(b),'NEW_MISMATCH')
+                desired[field]=(
+                  str(a),json.dumps(b,ensure_ascii=False) if isinstance(b,(dict,list)) else str(b),
+                  mismatch_type
+                )
         elif status=='REVIEW':
             for field,(a,b) in mism.items():
                 desired[field]=(str(a),str(b),'NEEDS_REVIEW')
@@ -182,6 +333,13 @@ class AuditSession:
             sig=fp([k.ad_id,field,nv,bv]); cur=active.get(field)
             event_object_key=(result.get('object_keys') or {}).get(field,result.get('object_key'))
             if cur and cur.get('signature')==sig:
+                if cur.get('event_type')!=typ and cur.get('id') is not None:
+                    self.statements.append((
+                      'UPDATE events SET event_type=?,object_key=? WHERE id=?',
+                      [typ,event_object_key,cur['id']]
+                    ))
+                    cur['event_type']=typ
+                    cur['object_key']=event_object_key
                 continue
             if cur and cur.get('id') is not None:
                 self.statements.append(('UPDATE events SET active=0,resolved_at=? WHERE id=?',[ts,cur['id']]))

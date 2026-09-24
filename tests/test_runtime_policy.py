@@ -213,6 +213,10 @@ def test_summary_shows_kufar_and_detection_times():
     assert '<b>BIR: 47 000 €</b>' in rendered
     assert '**' not in rendered
 
+    probable=dict(row,event_type='PROBABLE_MISMATCH')
+    probable_out=summary_line(probable,'2026-09-21T05:20:00Z')
+    assert '🟠 **ВЕРОЯТНО: НЕ СОВПАДАЕТ ЦЕНА**' in probable_out
+
 def test_morning_overview_is_short_and_scannable():
     rows=[
       {'field_name':'area','profile_id':'11093294'},
