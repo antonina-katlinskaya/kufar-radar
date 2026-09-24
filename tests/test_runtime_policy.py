@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 import json
 from radar.main import (
     should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets,
+    include_active_event_targets,
     summary_line, summary_overview, summary_link_keyboard, telegram_html,
     bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, add_subscriber, consume_invite, process_updates,
@@ -58,6 +59,15 @@ def test_small_incremental_change_is_audited():
     targets,mode=choose_audit_targets(items,changed,1848)
     assert targets==changed
     assert mode=='incremental'
+
+def test_bir_refresh_rechecks_only_ads_with_current_active_events():
+    first=KufarListing(ad_id='1',url='x',profile_id='11077002')
+    second=KufarListing(ad_id='2',url='y',profile_id='11077002')
+    unrelated=KufarListing(ad_id='3',url='z',profile_id='11077002')
+    targets=include_active_event_targets(
+      [first,second,unrelated],[first],{'1','2'}
+    )
+    assert targets==[first,second]
 
 def test_persistent_keyboard_buttons_are_actions():
     assert bot_action(CHECK_BUTTON)=='check'
