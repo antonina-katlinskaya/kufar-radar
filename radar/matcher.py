@@ -114,6 +114,17 @@ def mismatch_map(k,b):
     if v['address'] is False: out['address']=(k.address,resolved_bir_address(b) or b.building_name)
     return out
 
+def apply_mismatch_policy(k,b,mismatches):
+    """Treat a verified floor-only difference as informational, not a violation."""
+    out=dict(mismatches or {})
+    if set(out) != {'floor'} or not b.unit_no:
+        return out
+    v=vector(k,b)
+    required=('price','area','rooms','address')
+    if all(v.get(field) is True for field in required):
+        return {}
+    return out
+
 def match_new(k,candidates):
     scored=[]
     for b in candidates:
