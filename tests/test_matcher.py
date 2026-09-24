@@ -1,7 +1,8 @@
 from radar.models import KufarListing,BirListing
 from radar.house_directory import directory_address,resolved_bir_address
 from radar.matcher import (
-    apply_mismatch_policy,area_close,match_new,mismatch_map,round_area_1,vector
+    apply_mismatch_policy,area_close,match_for_audit_field,match_new,mismatch_map,
+    round_area_1,vector
 )
 
 def b(key='x',area=30.41,price=43669,rooms=1,floor=2,address='Игоря Лученка, 22'):
@@ -36,6 +37,31 @@ def test_room_change_is_mismatch():
 
 def test_ambiguous_does_not_accuse():
     r=match_new(k(area=30.41),[b('a'),b('b')]); assert r.obj is None; assert r.confidence=='AMBIGUOUS'
+
+def test_price_is_checked_without_trusting_wrong_address():
+    listing=k(price_eur=42000,area=30.4,address='Братская ул, 1, Минск')
+    result=match_for_audit_field(listing,[b()],'price')
+    assert result.obj is not None
+    assert result.mismatches['price'][0]==42000
+
+def test_area_is_checked_without_trusting_wrong_address():
+    listing=k(area=31.2,address='Братская ул, 1, Минск')
+    result=match_for_audit_field(listing,[b()],'area')
+    assert result.obj is not None
+    assert result.mismatches['area']==(31.2,30.41)
+
+def test_price_and_area_both_wrong_are_not_accused_without_independent_identity():
+    listing=k(price_eur=42000,area=31.2,address='Братская ул, 1, Минск')
+    assert match_for_audit_field(listing,[b()],'price').obj is None
+    assert match_for_audit_field(listing,[b()],'area').obj is None
+
+def test_history_only_breaks_tie_between_independently_matching_objects():
+    listing=k(price_eur=42000,area=30.4,address='Братская ул, 1, Минск')
+    candidates=[b('a'),b('b')]
+    ambiguous=match_for_audit_field(listing,candidates,'price')
+    selected=match_for_audit_field(listing,candidates,'price',preferred_object_key='b')
+    assert ambiguous.obj is None and ambiguous.confidence=='AMBIGUOUS'
+    assert selected.obj.object_key=='b' and selected.confidence=='HISTORY'
 
 def test_house_directory_resolves_mediteranian_by_slug_or_building_number():
     expected='Игоря Лученка ул, 22, Минск'

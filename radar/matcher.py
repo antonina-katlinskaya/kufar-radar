@@ -133,6 +133,64 @@ def apply_mismatch_policy(k,b,mismatches):
         return {}
     return out
 
+def match_for_audit_field(k,candidates,field,preferred_object_key=None):
+    """Identify a BIR object without using the value that is being audited.
+
+    Address is intentionally only a positive tie-breaker: a wrong or incomplete
+    Kufar address must not block price/area control, but it also cannot by itself
+    prove which apartment is being advertised.
+    """
+    identity_fields={
+      'price':('area','rooms','floor'),
+      'area':('price','rooms','floor'),
+    }.get(field)
+    if not identity_fields:
+        return MatchResult(None,'NONE',f'Unsupported independent audit field: {field}',{})
+
+    strong=[]
+    for b in candidates:
+        v=vector(k,b)
+        checks=[v.get(name) for name in identity_fields]
+        if all(value is True for value in checks):
+            strong.append((b,v))
+
+    if not strong:
+        return MatchResult(
+          None,'NONE',
+          f'No BIR object matches all independent fields for {field}: {", ".join(identity_fields)}',{}
+        )
+
+    if len(strong)>1 and preferred_object_key:
+        preferred=[row for row in strong if row[0].object_key==preferred_object_key]
+        if len(preferred)==1:
+            b,v=preferred[0]
+            return MatchResult(
+              b,'HISTORY',
+              f'History selected one of {len(strong)} candidates matching independent fields for {field}',
+              mismatch_map(k,b)
+            )
+
+    if len(strong)>1:
+        address_matches=[row for row in strong if row[1].get('address') is True]
+        if len(address_matches)==1:
+            b,v=address_matches[0]
+            return MatchResult(
+              b,'FIELD_HIGH',
+              f'Positive address evidence selected one of {len(strong)} candidates for {field}',
+              mismatch_map(k,b)
+            )
+        return MatchResult(
+          None,'AMBIGUOUS',
+          f'{len(strong)} BIR candidates match all independent fields for {field}',{},strong[0][0]
+        )
+
+    b,v=strong[0]
+    return MatchResult(
+      b,'FIELD_EXACT',
+      f'Unique BIR object matches independent fields for {field}: {", ".join(identity_fields)}',
+      mismatch_map(k,b)
+    )
+
 def match_new(k,candidates):
     scored=[]
     for b in candidates:

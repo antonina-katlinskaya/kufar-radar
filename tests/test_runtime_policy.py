@@ -8,7 +8,7 @@ from radar.main import (
     bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, add_subscriber, consume_invite, process_updates,
     SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
-    split_mass_records, reliable_today_version_ad_ids,
+    split_mass_records, actionable_event_records, reliable_today_version_ad_ids,
 )
 from radar.models import KufarListing
 
@@ -112,6 +112,16 @@ def test_five_same_kind_events_are_grouped_into_one_mass_notice():
     assert singles==[]
     assert len(mass)==1 and mass[0][0]=='address' and len(mass[0][2])==5
 
+def test_telegram_notifications_keep_only_price_and_area():
+    listing=KufarListing(ad_id='1',url='x',profile_id='11077002')
+    records=[
+      ({'field_name':'address'},listing),
+      ({'field_name':'floor'},listing),
+      ({'field_name':'price'},listing),
+      ({'field_name':'area'},listing),
+    ]
+    assert [event['field_name'] for event,_ in actionable_event_records(records)]==['price','area']
+
 class FakeTelegram:
     def __init__(self,updates=None):
         self.updates=list(updates or [])
@@ -204,11 +214,12 @@ def test_morning_overview_is_short_and_scannable():
       local_now=datetime(2026,9,22,8,2,tzinfo=MINSK)
     )
     assert '☀️ **УТРЕННЯЯ ПРОВЕРКА — 22.09**' in out
-    assert '⚠️ **Найдено расхождений: 2**' in out
+    assert '⚠️ **Найдено нарушений цены и площади: 1**' in out
     assert '📐 Площадь — 1' in out
-    assert '🏢 Этаж — 1' in out
     assert '👤 Алёна Довгун — 1' in out
-    assert '👤 Ирина Барашенко — 1' in out
+    assert 'ℹ️ **Служебные сигналы — 1**' in out
+    assert 'этаж 1' in out
+    assert 'Ирина Барашенко' not in out
     assert 'Проверка завершена в 08:02' in out
     assert 'Управление радаром' not in out
 

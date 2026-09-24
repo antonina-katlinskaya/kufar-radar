@@ -85,6 +85,8 @@ STRICT_BACKFILL_CLEANUP_STATE='strict_address_v2_cleanup_done'
 STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 RELIABLE_VERSIONS_CUTOFF='2026-09-24T13:01:00+00:00'
 AUDIT_BATCH_LIMIT=200
+ACTIONABLE_FIELDS={'price','area'}
+SERVICE_FIELDS=('address','floor','rooms','existence','review')
 
 PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
 
@@ -371,6 +373,12 @@ def split_mass_records(records,min_size=5):
             singles.extend(group)
     return mass,singles
 
+def actionable_event_records(records):
+    return [
+      (event,item) for event,item in records
+      if event.get('field_name') in ACTIONABLE_FIELDS
+    ]
+
 def save_diag(db,source,diag):
     ts=datetime.now(timezone.utc).isoformat(); stm=[]; seen=set()
     for row in diag[-10:]:
@@ -598,9 +606,22 @@ def summary_rows(db):
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
+           AND e.field_name IN ('price','area')
          ORDER BY e.occurred_at DESC''',
       [settings.live_cutoff_utc]
     )
+
+def service_event_counts(db):
+    rows=db.query(
+      '''SELECT e.field_name,COUNT(*) AS n
+         FROM events e
+         JOIN kufar_ads k ON k.ad_id=e.ad_id
+         WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
+           AND e.field_name NOT IN ('price','area')
+         GROUP BY e.field_name ORDER BY e.field_name''',
+      [settings.live_cutoff_utc]
+    )
+    return {row['field_name']:int(row['n']) for row in rows}
 
 def summary_card(r,bir_checked_at=None):
     field=r.get('field_name')
@@ -634,24 +655,26 @@ def summary_link_keyboard(r):
     bir_url=bir_link_from_row(r) if r.get('object_key') else settings.bir_search_url
     return link_keyboard(r.get('url'),bir_url)
 
-def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None):
+def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None,service_counts=None):
     now=local_now or datetime.now(MINSK)
+    service_counts=dict(service_counts or {})
+    for row in rows:
+        field=row.get('field_name')
+        if field not in ACTIONABLE_FIELDS:
+            service_counts[field]=service_counts.get(field,0)+1
+    rows=[row for row in rows if row.get('field_name') in ACTIONABLE_FIELDS]
     title='☀️ **УТРЕННЯЯ ПРОВЕРКА' if mode=='morning' else '🔎 **ПРОВЕРКА ОБЪЯВЛЕНИЙ'
     parts=[f"{title} — {now.strftime('%d.%m')}**",'']
     if not rows:
-        parts.append('✅ **Подтверждённых нарушений не обнаружено**')
+        parts.append('✅ **Нарушений цены и площади не обнаружено**')
     else:
-        confirmed=sum(r.get('field_name')!='review' for r in rows)
-        reviews=len(rows)-confirmed
-        if confirmed: parts.append(f"⚠️ **Найдено расхождений: {confirmed}**")
-        else: parts.append('✅ **Подтверждённых нарушений не обнаружено**')
-        if reviews: parts.append(f"🟡 **Требуют ручной проверки: {reviews}**")
+        parts.append(f"⚠️ **Найдено нарушений цены и площади: {len(rows)}**")
         counts={}
         for r in rows:
             field=r.get('field_name')
             counts[field]=counts.get(field,0)+1
         parts.append('')
-        for field in ['price','area','rooms','floor','address','existence','review']:
+        for field in ['price','area']:
             if counts.get(field):
                 parts.append(f"{FIELD_ICONS.get(field,'⚠️')} {FIELD_LABELS.get(field,field)} — {counts[field]}")
         people={}
@@ -663,6 +686,18 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None):
             parts.append('')
             for profile_id,count in people.items():
                 parts.append(f"👤 {profile_label(profile_id)} — {count}")
+    service_total=sum(service_counts.values())
+    if service_total:
+        labels={'address':'адрес','floor':'этаж','rooms':'комнаты','existence':'наличие','review':'сопоставление'}
+        details=[
+          f"{labels.get(field,field)} {service_counts[field]}"
+          for field in SERVICE_FIELDS if service_counts.get(field)
+        ]
+        parts += [
+          '',
+          f"ℹ️ **Служебные сигналы — {service_total}** (без отдельных уведомлений)",
+          ' · '.join(details),
+        ]
     checked=parse_any_ts(bir_checked_at)
     if checked:
         parts += ['',f"Проверка завершена в {checked.astimezone(MINSK).strftime('%H:%M')}"]
@@ -670,9 +705,12 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None):
 
 def send_state_summary(db,tg,chat,keyboard=True,mode='status'):
     rows=summary_rows(db)
+    service_counts=service_event_counts(db)
     bir_checked_at=db.get_state('last_bir_success')
     tg.send(
-      chat,telegram_html(summary_overview(rows,bir_checked_at,mode=mode)),
+      chat,telegram_html(summary_overview(
+        rows,bir_checked_at,mode=mode,service_counts=service_counts
+      )),
       parse_mode='HTML',reply_keyboard=MAIN_KEYBOARD if keyboard else None
     )
     for r in rows:
@@ -782,7 +820,7 @@ async def run():
     # Existing profiles audit only incremental NEW/EDITED/REAPPEARED cards.
     # A newly added profile seeds old history silently but still audits rows
     # whose Kufar publication/update time is today in Minsk.
-    session=AuditSession(db)
+    session=AuditSession(db,[item.ad_id for item in targets])
     all_new=[]
     for k in targets:
         r=session.audit(k)
@@ -798,9 +836,19 @@ async def run():
     if strict_recheck:
         db.set_state(STRICT_ADDRESS_RECHECK_STATE,'1')
     active_by_field=active_event_counts(db)
+    actionable_new_count=sum(
+      1 for event,_item in all_new
+      if event.get('field_name') in ACTIONABLE_FIELDS
+    )
+    actionable_active_count=sum(
+      active_by_field.get(field,0) for field in ACTIONABLE_FIELDS
+    )
     print(
       f"RADAR_RESULT targets={len(targets)} new_events={len(all_new)} "
-      f"active_events={sum(active_by_field.values())} active_by_field={active_by_field} statements={statements}"
+      f"actionable_new={actionable_new_count} service_new={len(all_new)-actionable_new_count} "
+      f"active_events={sum(active_by_field.values())} actionable_active={actionable_active_count} "
+      f"service_active={sum(active_by_field.values())-actionable_active_count} "
+      f"active_by_field={active_by_field} statements={statements}"
     )
 
     local_now=datetime.now(MINSK)
@@ -814,7 +862,8 @@ async def run():
             morning=True
 
     if chats and should_live_notify(local_now) and not morning:
-        mass,single_records=split_mass_records(all_new)
+        actionable_new=actionable_event_records(all_new)
+        mass,single_records=split_mass_records(actionable_new)
         for field,profile_id,records in mass:
             for chat in chats:
                 safe_send(
