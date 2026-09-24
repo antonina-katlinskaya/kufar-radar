@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import math
 import re
+from .house_directory import resolved_bir_address
 from .models import KufarListing, BirListing
 
 @dataclass
@@ -91,8 +92,9 @@ def location_close(k,b,tol_m=250):
     return None if d is None else d<=tol_m
 
 def vector(k,b):
-    addr = None if not k.address or not b.official_address else address_equal(k.address,b.official_address)
-    loc = None if b.official_address else location_close(k,b)
+    official_address=resolved_bir_address(b)
+    addr = None if not k.address or not official_address else address_equal(k.address,official_address)
+    loc = None if official_address else location_close(k,b)
     return {
       'price': None if k.price_eur is None else price_matches(k.price_eur,b),
       'area': None if k.area is None or b.area is None else area_close(k.area,b.area),
@@ -109,7 +111,7 @@ def mismatch_map(k,b):
     if v['area'] is False: out['area']=(k.area,b.area)
     if v['rooms'] is False: out['rooms']=(k.rooms,b.rooms)
     if v['floor'] is False: out['floor']=(k.floor,b.floor)
-    if v['address'] is False: out['address']=(k.address,b.official_address or b.building_name)
+    if v['address'] is False: out['address']=(k.address,resolved_bir_address(b) or b.building_name)
     return out
 
 def match_new(k,candidates):
