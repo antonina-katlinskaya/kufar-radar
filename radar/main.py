@@ -563,6 +563,14 @@ def active_event_counts(db):
     )
     return {r['field_name']: int(r['n']) for r in rows}
 
+def active_event_type_counts(db):
+    rows=db.query(
+      'SELECT event_type, COUNT(*) AS n FROM events '
+      'WHERE active=1 AND occurred_at>=? GROUP BY event_type ORDER BY event_type',
+      [settings.live_cutoff_utc]
+    )
+    return {r['event_type']:int(r['n']) for r in rows}
+
 def process_updates(db,tg):
     offset=int(db.get_state('telegram_offset','0') or 0)
     force_chats=set(); show_chats=set(); joined_chats=set()
@@ -859,6 +867,7 @@ async def run():
     if strict_recheck:
         db.set_state(STRICT_ADDRESS_RECHECK_STATE,'1')
     active_by_field=active_event_counts(db)
+    active_by_type=active_event_type_counts(db)
     actionable_new_count=sum(
       1 for event,_item in all_new
       if event.get('field_name') in ACTIONABLE_FIELDS
@@ -871,7 +880,7 @@ async def run():
       f"actionable_new={actionable_new_count} service_new={len(all_new)-actionable_new_count} "
       f"active_events={sum(active_by_field.values())} actionable_active={actionable_active_count} "
       f"service_active={sum(active_by_field.values())-actionable_active_count} "
-      f"active_by_field={active_by_field} statements={statements}"
+      f"active_by_field={active_by_field} active_by_type={active_by_type} statements={statements}"
     )
 
     local_now=datetime.now(MINSK)
