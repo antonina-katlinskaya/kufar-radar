@@ -372,6 +372,15 @@ def choose_audit_targets(items,changed,previous_active,audit_today_on_baseline=F
         return [],'bulk_rebaseline'
     return changed,'incremental'
 
+def include_active_event_targets(items,targets,active_ad_ids):
+    """Recheck current violations after BIR data changes without scanning old history."""
+    out=list(targets); seen={item.ad_id for item in out}
+    wanted={str(ad_id) for ad_id in active_ad_ids}
+    for item in items:
+        if item.ad_id in wanted and item.ad_id not in seen:
+            out.append(item); seen.add(item.ad_id)
+    return out
+
 def archive_legacy_events_once(db):
     if db.get_state(FRESH_SCOPE_STATE,'')=='1': return 0
     rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1')
@@ -607,9 +616,10 @@ async def run():
             print(f'TELEGRAM_INVITE_ERROR type={type(exc).__name__} detail={exc}')
 
     bir_changed=await collect_bir(db,force=bool(force_chats))
-    profile_runs=[]; targets=[]
+    profile_runs=[]; targets=[]; all_items=[]
     for profile in KUFAR_PROFILES:
         items,changed,previous_active=await collect_kufar(db,profile)
+        all_items.extend(items)
         selected,selection_mode=choose_audit_targets(
           items,changed,previous_active,
           audit_today_on_baseline=profile.get('audit_today_on_baseline',False),
@@ -624,10 +634,22 @@ async def run():
     archived_legacy_events=archive_legacy_events_once(db)
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
+    rechecked_active_events=0
+    if bir_changed:
+        active_rows=db.query(
+          'SELECT DISTINCT ad_id FROM events WHERE active=1 AND occurred_at>=?',
+          [settings.live_cutoff_utc]
+        )
+        before=len(targets)
+        targets=include_active_event_targets(
+          all_items,targets,{row['ad_id'] for row in active_rows}
+        )
+        rechecked_active_events=len(targets)-before
     print(
       f"RADAR_INPUT bir_refreshed={bir_changed} profiles={profile_runs} targets={len(targets)} "
       f"archived_legacy_events={archived_legacy_events} "
       f"rounded_area_events_closed={rounded_area_events_closed} "
+      f"rechecked_active_events={rechecked_active_events} "
     )
 
     # Existing profiles audit only incremental NEW/EDITED/REAPPEARED cards.
