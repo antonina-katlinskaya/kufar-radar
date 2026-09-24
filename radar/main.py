@@ -15,7 +15,7 @@ from .matcher import area_close
 MINSK=ZoneInfo('Europe/Minsk')
 CHECK_BUTTON='🔄 Проверить сейчас'
 MAIN_KEYBOARD=[[CHECK_BUTTON]]
-KEYBOARD_STATE='telegram_main_keyboard_v3_sent'
+KEYBOARD_STATE='telegram_main_keyboard_v4_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
@@ -838,9 +838,15 @@ async def run():
         safe_state_summary(db,tg,chat,keyboard=True)
 
     if chats and install_keyboard and not morning and not force_chats and not show_chats and not joined_chats:
+        restored=False
         for chat in chats:
-            safe_state_summary(db,tg,chat,keyboard=True)
-        db.set_state(KEYBOARD_STATE,'1')
+            restored=safe_send(
+              tg,chat,
+              '🔄 Кнопка «Проверить сейчас» снова закреплена внизу чата.',
+              reply_keyboard=MAIN_KEYBOARD
+            ) or restored
+        if restored:
+            db.set_state(KEYBOARD_STATE,'1')
 
 if __name__=='__main__':
     asyncio.run(run())
