@@ -42,6 +42,13 @@ def test_house_directory_resolves_mediteranian_by_slug_or_building_number():
     assert directory_address('11.2','/dom-mediteranian/')==expected
     assert directory_address('Дом 11,2',None)==expected
 
+def test_house_directory_reuses_verified_addresses_from_bir_project():
+    assert directory_address('Дом 11.1','/dom-kaspian/')=='Игоря Лученка ул, 18, Минск'
+    assert directory_address('Дом 21.1','/dom-kontinental/')=='Брилевская ул, 54, Минск'
+    assert directory_address('Дом 27.6','/dom-sad-ermitazh/')=='Игоря Лученка ул, 4, Минск'
+    assert directory_address('Дом 27.11.1','/dom-shtadt-park/')=='Михаила Савицкого ул, 9, Минск'
+    assert directory_address('Дом 24.2.3','/andromeda/')=='площадь Старый Аэропорт, 2, Минск'
+
 def test_bir_address_has_priority_over_directory():
     item=b(address='Адрес непосредственно из BIR')
     item.raw={'house_href':'/dom-mediteranian/'}
@@ -66,6 +73,14 @@ def test_missing_bir_address_accepts_correct_directory_address():
     r=match_new(k(address='Игоря Лученка ул, 22, Минск'),[item])
     assert r.obj is not None
     assert 'address' not in r.mismatches
+
+def test_ambiguous_units_still_report_consensus_house_address_error():
+    first=b('a',address=None); first.building_name='11.2'; first.raw={'house_href':'/dom-mediteranian/'}
+    second=b('b',address=None); second.building_name='11.2'; second.raw={'house_href':'/dom-mediteranian/'}
+    r=match_new(k(area=30.41,address='Братская ул, 22, Минск'),[first,second])
+    assert r.obj is None and r.confidence=='AMBIGUOUS'
+    assert r.mismatches['address']==('Братская ул, 22, Минск','Игоря Лученка ул, 22, Минск')
+    assert r.reference.object_key=='a'
 
 def test_floor_only_difference_is_suppressed_when_everything_else_matches():
     item=b(floor=3)

@@ -28,6 +28,7 @@ TITLES={
   'floor':'Расхождение по этажу между Kufar и BIR',
   'address':'Расхождение по адресу между Kufar и BIR',
   'existence':'Объявление на Kufar не соответствует наличию на BIR',
+  'review':'Нужна ручная проверка сопоставления',
 }
 
 CARD_TITLES={
@@ -37,6 +38,7 @@ CARD_TITLES={
   'floor':'НЕ СОВПАДАЕТ ЭТАЖ',
   'address':'НЕ СОВПАДАЕТ АДРЕС',
   'existence':'ОБЪЕКТА НЕТ НА BIR',
+  'review':'НУЖНА РУЧНАЯ ПРОВЕРКА',
 }
 
 FIELD_LABELS={
@@ -46,6 +48,7 @@ FIELD_LABELS={
   'floor':'Этаж',
   'address':'Адрес',
   'existence':'Нет на BIR',
+  'review':'Нужна проверка',
 }
 
 FIELD_ICONS={
@@ -55,23 +58,30 @@ FIELD_ICONS={
   'floor':'🏢',
   'address':'📍',
   'existence':'❌',
+  'review':'🟡',
 }
 
 HOUSE_NAMES={
-  'andromeda':'Андромеда',
   'atlantik':'Атлантик',
   'dom-atlantik':'Атлантик',
   'dom-everest':'Эверест',
   'dom-kontinental':'Континенталь',
   'dom-mediteranian':'Медитераниан',
   'dom-shtadt-park':'Штадт-парк',
-  'kaspian':'Каспиан',
-  'lira':'Лира',
-  'sirius':'Сириус',
-  'vega':'Вега',
+  'kaspian':'Каспиан', 'dom-kaspian':'Каспиан',
+  'lira':'Лира', 'dom-lira':'Лира',
+  'orion':'Орион', 'dom-orion':'Орион',
+  'andromeda':'Андромеда', 'dom-andromeda':'Андромеда',
+  'sirius':'Сириус', 'dom-sirius':'Сириус',
+  'vega':'Вега', 'dom-vega':'Вега',
+  'kalemegdan':'Калемегдан', 'dom-kalemegdan':'Калемегдан',
+  'sad-ermitazh':'Сад Эрмитаж', 'dom-sad-ermitazh':'Сад Эрмитаж',
 }
 
 FRESH_SCOPE_STATE='fresh_scope_v3_applied'
+PENDING_AUDITS_STATE='pending_audits_v1'
+STRICT_ADDRESS_RECHECK_STATE='strict_address_v1_recheck_done'
+AUDIT_BATCH_LIMIT=200
 
 PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
 
@@ -262,6 +272,8 @@ def comparison_lines(row,include_label=False):
         parts += [f"**Kufar: {row.get('new_value') or '—'}**",f"**BIR: {row.get('bir_value') or '—'}**"]
     elif field=='existence':
         parts += ["**Kufar: объявление активно**","**BIR: объект не найден**"]
+    elif field=='review':
+        parts += ["**Автоматически сопоставить квартиру не удалось**",f"Причина: {row.get('bir_value') or 'недостаточно данных'}"]
     return parts
 
 def event_context(db,e,k):
@@ -282,9 +294,10 @@ def fmt_event_group(db,events,k):
     b,building,address=event_context(db,first,k)
     fields={e['field_name']:e for e in events}
 
+    marker='🟡' if set(fields)=={'review'} else '🔴'
     if len(fields)==1:
         field=next(iter(fields))
-        parts=[f"🔴 **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**"]
+        parts=[f"{marker} **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**"]
     else:
         parts=["🔴 **НЕСКОЛЬКО РАСХОЖДЕНИЙ**"]
 
@@ -294,7 +307,7 @@ def fmt_event_group(db,events,k):
       k.rooms,k.area,k.floor,omit_fields=set(fields)
     )
 
-    for field in ['price','area','rooms','floor','address','existence']:
+    for field in ['price','area','rooms','floor','address','existence','review']:
         e=fields.get(field)
         if not e: continue
         parts.append('')
@@ -314,6 +327,46 @@ def event_link_keyboard(db,event,k):
     b,_,_=event_context(db,event,k)
     bir_url=bir_link_from_row(b) if b else settings.bir_search_url
     return link_keyboard(k.url,bir_url)
+
+def compact_comparison(row):
+    field=row.get('field_name')
+    if field=='price':
+        try: bir=json.loads(row.get('bir_value') or '{}')
+        except: bir={}
+        return f"{fmt_eur(row.get('new_value'))} → {fmt_eur(bir.get('regular') or bir.get('fast'))}"
+    if field=='area': return f"{fmt_area(row.get('new_value'))} → {fmt_area(row.get('bir_value'))} м²"
+    if field=='rooms': return f"{fmt_rooms(row.get('new_value'))} → {fmt_rooms(row.get('bir_value'))} комн."
+    if field=='floor': return f"{fmt_rooms(row.get('new_value'))} → {fmt_rooms(row.get('bir_value'))} этаж"
+    if field=='address': return f"{row.get('new_value') or '—'} → {row.get('bir_value') or '—'}"
+    if field=='existence': return 'активно → объекта нет на BIR'
+    return str(row.get('bir_value') or 'нужна проверка')
+
+def fmt_mass_event_group(field,profile_id,records):
+    marker='🟡' if field=='review' else '🔴'
+    parts=[
+      f"{marker} **{CARD_TITLES.get(field,'НАЙДЕНЫ РАСХОЖДЕНИЯ')} — {len(records)}**",'',
+      f"👤 **{profile_label(profile_id)}**",
+      'Однотипные изменения собраны в одно уведомление:',
+    ]
+    for row,k in records[:12]:
+        parts.append(f"• № {k.ad_id}: {compact_comparison(row)}")
+        if k.url: parts.append(str(k.url))
+    if len(records)>12:
+        parts.append(f"…и ещё {len(records)-12}. Полный список доступен по кнопке проверки.")
+    return '\n'.join(parts)
+
+def split_mass_records(records,min_size=5):
+    grouped={}
+    for row,k in records:
+        key=(str(k.profile_id),row.get('field_name'))
+        grouped.setdefault(key,[]).append((row,k))
+    mass=[]; singles=[]
+    for (profile_id,field),group in grouped.items():
+        if len(group)>=min_size:
+            mass.append((field,profile_id,group))
+        else:
+            singles.extend(group)
+    return mass,singles
 
 def save_diag(db,source,diag):
     ts=datetime.now(timezone.utc).isoformat(); stm=[]; seen=set()
@@ -369,17 +422,44 @@ def choose_audit_targets(items,changed,previous_active,audit_today_on_baseline=F
             return fresh,'baseline_today_only'
         return [],'baseline_only'
     if len(changed)>max(25,int(total*0.10)):
-        return [],'bulk_rebaseline'
+        return changed,'bulk_incremental'
     return changed,'incremental'
 
 def include_active_event_targets(items,targets,active_ad_ids):
-    """Recheck current violations after BIR data changes without scanning old history."""
+    """Include selected current ads without duplicating already selected targets."""
     out=list(targets); seen={item.ad_id for item in out}
     wanted={str(ad_id) for ad_id in active_ad_ids}
     for item in items:
         if item.ad_id in wanted and item.ad_id not in seen:
             out.append(item); seen.add(item.ad_id)
     return out
+
+def load_pending_audits(db):
+    try:
+        value=json.loads(db.get_state(PENDING_AUDITS_STATE,'{}') or '{}')
+        return value if isinstance(value,dict) else {}
+    except (TypeError,ValueError):
+        return {}
+
+def save_pending_audits(db,pending):
+    db.set_state(PENDING_AUDITS_STATE,json.dumps(pending,ensure_ascii=False,separators=(',',':')))
+
+def enqueue_pending_audits(pending,items,reason='new_or_changed'):
+    ts=datetime.now(timezone.utc).isoformat()
+    for item in items:
+        old=pending.get(item.ad_id) or {}
+        pending[item.ad_id]={
+          'profile_id':str(item.profile_id),'reason':reason,
+          'first_queued_at':old.get('first_queued_at') or ts,
+          'last_queued_at':ts,'attempts':int(old.get('attempts') or 0),
+        }
+    return pending
+
+def today_version_ad_ids(db,local_now=None):
+    local_now=local_now or datetime.now(MINSK)
+    start=datetime.combine(local_now.date(),datetime.min.time(),tzinfo=MINSK).astimezone(timezone.utc).isoformat()
+    rows=db.query('SELECT DISTINCT ad_id FROM kufar_versions WHERE observed_at>=?',[start])
+    return {str(row['ad_id']) for row in rows}
 
 def archive_legacy_events_once(db):
     if db.get_state(FRESH_SCOPE_STATE,'')=='1': return 0
@@ -506,7 +586,7 @@ def summary_card(r,bir_checked_at=None):
     building=card_house_label(r)
     address=r.get('address') or r.get('official_address')
     parts=[
-      f"🔴 **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**",'',
+      f"{'🟡' if field=='review' else '🔴'} **{CARD_TITLES.get(field,'НАЙДЕНО РАСХОЖДЕНИЕ')}**",'',
       f"👤 **{profile_label(r.get('profile_id'))}**"
     ]
     parts += object_identity_lines(
@@ -540,13 +620,17 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None):
     if not rows:
         parts.append('✅ **Подтверждённых нарушений не обнаружено**')
     else:
-        parts.append(f"⚠️ **Найдено расхождений: {len(rows)}**")
+        confirmed=sum(r.get('field_name')!='review' for r in rows)
+        reviews=len(rows)-confirmed
+        if confirmed: parts.append(f"⚠️ **Найдено расхождений: {confirmed}**")
+        else: parts.append('✅ **Подтверждённых нарушений не обнаружено**')
+        if reviews: parts.append(f"🟡 **Требуют ручной проверки: {reviews}**")
         counts={}
         for r in rows:
             field=r.get('field_name')
             counts[field]=counts.get(field,0)+1
         parts.append('')
-        for field in ['price','area','rooms','floor','address','existence']:
+        for field in ['price','area','rooms','floor','address','existence','review']:
             if counts.get(field):
                 parts.append(f"{FIELD_ICONS.get(field,'⚠️')} {FIELD_LABELS.get(field,field)} — {counts[field]}")
         people={}
@@ -616,6 +700,7 @@ async def run():
             print(f'TELEGRAM_INVITE_ERROR type={type(exc).__name__} detail={exc}')
 
     bir_changed=await collect_bir(db,force=bool(force_chats))
+    pending=load_pending_audits(db)
     profile_runs=[]; targets=[]; all_items=[]
     for profile in KUFAR_PROFILES:
         items,changed,previous_active=await collect_kufar(db,profile)
@@ -625,12 +710,27 @@ async def run():
           audit_today_on_baseline=profile.get('audit_today_on_baseline',False),
           local_now=datetime.now(MINSK)
         )
+        enqueue_pending_audits(pending,selected)
         targets.extend(selected)
         profile_runs.append({
           'id':profile['id'],'label':profile['label'],'items':len(items),
           'changed':len(changed),'previous_active':previous_active,
           'targets':len(selected),'mode':selection_mode,
         })
+    # Persist before auditing: if the run is interrupted, no detected change is lost.
+    save_pending_audits(db,pending)
+
+    targets=include_active_event_targets(all_items,targets,set(pending))
+    today_ids=set()
+    strict_recheck=db.get_state(STRICT_ADDRESS_RECHECK_STATE,'')!='1'
+    if force_chats or strict_recheck:
+        today_ids=today_version_ad_ids(db)
+        enqueue_pending_audits(
+          pending,[item for item in all_items if item.ad_id in today_ids],
+          reason='manual_today' if force_chats else 'strict_address_recheck'
+        )
+        save_pending_audits(db,pending)
+        targets=include_active_event_targets(all_items,targets,today_ids)
     archived_legacy_events=archive_legacy_events_once(db)
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
@@ -645,6 +745,10 @@ async def run():
           all_items,targets,{row['ad_id'] for row in active_rows}
         )
         rechecked_active_events=len(targets)-before
+        enqueue_pending_audits(pending,targets[before:],reason='bir_update')
+        save_pending_audits(db,pending)
+    if len(targets)>AUDIT_BATCH_LIMIT:
+        targets=targets[:AUDIT_BATCH_LIMIT]
     print(
       f"RADAR_INPUT bir_refreshed={bir_changed} profiles={profile_runs} targets={len(targets)} "
       f"archived_legacy_events={archived_legacy_events} "
@@ -661,7 +765,15 @@ async def run():
         r=session.audit(k)
         for e in session.sync(k,r):
             all_new.append((e,k))
+        if r.get('status')=='INSUFFICIENT':
+            if k.ad_id in pending:
+                pending[k.ad_id]['attempts']=int(pending[k.ad_id].get('attempts') or 0)+1
+        else:
+            pending.pop(k.ad_id,None)
     statements=session.flush()
+    save_pending_audits(db,pending)
+    if strict_recheck:
+        db.set_state(STRICT_ADDRESS_RECHECK_STATE,'1')
     active_by_field=active_event_counts(db)
     print(
       f"RADAR_RESULT targets={len(targets)} new_events={len(all_new)} "
@@ -679,8 +791,15 @@ async def run():
             morning=True
 
     if chats and should_live_notify(local_now) and not morning:
+        mass,single_records=split_mass_records(all_new)
+        for field,profile_id,records in mass:
+            for chat in chats:
+                safe_send(
+                  tg,chat,telegram_html(fmt_mass_event_group(field,profile_id,records)),
+                  parse_mode='HTML'
+                )
         grouped={}
-        for e,k in all_new:
+        for e,k in single_records:
             grouped.setdefault(k.ad_id,{'k':k,'events':[]})['events'].append(e)
         for item in grouped.values():
             for chat in chats:

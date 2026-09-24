@@ -2,39 +2,100 @@ import re
 from urllib.parse import urlparse
 
 
-# Only verified official addresses belong here. The BIR house slug is the primary
-# key because it is stable even when the visible building name changes slightly.
-OFFICIAL_ADDRESS_BY_HOUSE_SLUG = {
-    'dom-mediteranian': 'Игоря Лученка ул, 22, Минск',
+# Проверенный справочник из проекта BIR Radar. Пустые/неподтверждённые адреса
+# намеренно не добавлены: такой дом должен попасть в ручную проверку.
+HOUSE_DIRECTORY = {
+    '2.2': 'Аэродромная ул, 28, Минск', '2.3': 'Аэродромная ул, 30, Минск',
+    '2.9': 'Братская ул, 12, Минск', '2.10': 'Братская ул, 14, Минск',
+    '4.2': 'Николы Теслы ул, 33, Минск',
+    '7.1': 'Жореса Алфёрова ул, 8, Минск', '7.2': 'Игоря Лученка ул, 25, Минск',
+    '7.6': 'Братская ул, 7, Минск', '7.7': 'Братская ул, 5, Минск',
+    '7.8': 'Братская ул, 3, Минск', '7.9': 'Братская ул, 1, Минск',
+    '7.10': 'Николы Теслы ул, 24, Минск', '7.11': 'Николы Теслы ул, 26, Минск',
+    '7.12': 'Жореса Алфёрова ул, 2, Минск', '7.13': 'Жореса Алфёрова ул, 4, Минск',
+    '9.1': 'Жореса Алфёрова ул, 5, Минск', '9.2': 'Жореса Алфёрова ул, 3, Минск',
+    '9.3': 'Жореса Алфёрова ул, 1, Минск', '9.6': 'Леонида Щемелёва ул, 10, Минск',
+    '9.7': 'Леонида Щемелёва ул, 14, Минск', '9.11': 'Игоря Лученка ул, 27, Минск',
+    '10.1': 'Братская ул, 17, Минск', '10.2': 'Братская ул, 15, Минск',
+    '10.3': 'Братская ул, 13, Минск', '10.4': 'Братская ул, 11, Минск',
+    '10.5': 'Игоря Лученка ул, 24, Минск', '10.6': 'Жореса Алфёрова ул, 10, Минск',
+    '10.7': 'Жореса Алфёрова ул, 12, Минск', '10.8': 'Жореса Алфёрова ул, 14, Минск',
+    '10.9': 'Жореса Алфёрова ул, 16, Минск', '10.10': 'Игоря Лученка ул, 26, Минск',
+    '11.1': 'Игоря Лученка ул, 18, Минск', '11.2': 'Игоря Лученка ул, 22, Минск',
+    '11.5': 'Михаила Савицкого ул, 25, Минск',
+    '12.1': 'Леонида Щемелёва ул, 30, Минск', '12.2': 'Леонида Щемелёва ул, 28, Минск',
+    '12.3': 'Леонида Щемелёва ул, 26, Минск', '12.5': 'Игоря Лученка ул, 32, Минск',
+    '12.7': 'Игоря Лученка ул, 30, Минск', '12.8': 'Михаила Савицкого ул, 35, Минск',
+    '12.9': 'Михаила Савицкого ул, 37, Минск', '12.10': 'Михаила Савицкого ул, 39, Минск',
+    '12.11': 'Жореса Алфёрова ул, 7, Минск', '12.12': 'Жореса Алфёрова ул, 9, Минск',
+    '16.38': 'Жореса Алфёрова ул, 22, Минск', '16.39': 'Михаила Савицкого ул, 24, Минск',
+    '18.1': 'Белградская ул, 1, Минск', '18.4': 'проспект Мира, 2, Минск',
+    '18.8': 'Николы Теслы ул, 29, Минск', '19.1': 'Аэродромная ул, 18, Минск',
+    '19.7': 'Аэродромная ул, 24, Минск', '20.1': 'Брилевская ул, 31, Минск',
+    '20.2': 'Брилевская ул, 29, Минск', '20.3': 'Брилевская ул, 27, Минск',
+    '20.4': 'Брилевская ул, 25, Минск', '20.8': 'Николы Теслы ул, 11, Минск',
+    '20.9': 'Николы Теслы ул, 17, Минск', '20.10': 'Николы Теслы ул, 7, Минск',
+    '21.1': 'Брилевская ул, 54, Минск', '22.1': 'Игоря Лученка ул, 15, Минск',
+    '22.7': 'проспект Мира, 8, Минск',
+    '24.2.1': 'площадь Старый Аэропорт, 2, Минск',
+    '24.2.2': 'площадь Старый Аэропорт, 2, Минск',
+    '24.2.3': 'площадь Старый Аэропорт, 2, Минск',
+    '24.2.4': 'площадь Старый Аэропорт, 2, Минск',
+    '24.2.5': 'площадь Старый Аэропорт, 2, Минск',
+    '25.2': 'Михаила Савицкого ул, 4, Минск', '25.4': 'Михаила Савицкого ул, 10, Минск',
+    '25.7': 'Кижеватова ул, 1А, Минск', '26.6': 'Михаила Савицкого ул, 3, Минск',
+    '27.1': 'Леонида Левина ул, 7, Минск', '27.2': 'Леонида Левина ул, 1, Минск',
+    '27.3': 'Игоря Лученка ул, 2, Минск', '27.5': 'Леонида Левина ул, 3, Минск',
+    '27.6': 'Игоря Лученка ул, 4, Минск', '27.11.1': 'Михаила Савицкого ул, 9, Минск',
+    '28.5': 'Игоря Лученка ул, 16, Минск', '28.6': 'Игоря Лученка ул, 18, Минск',
+    '28.7': 'Игоря Лученка ул, 20, Минск', '29.1': 'Белградская ул, 11, Минск',
+    '29.3': 'проспект Мира, 12, Минск', '29.4': 'проспект Мира, 14, Минск',
+    '30.1': 'Леонида Левина ул, 13, Минск', '30.2': 'Леонида Левина ул, 11, Минск',
+    '30.3': 'Леонида Левина ул, 9, Минск', '30.5': 'Михаила Савицкого ул, 22, Минск',
+    '30.8': 'Кижеватова ул, 3Д, Минск', '30.11': 'Кижеватова ул, 3Б, Минск',
 }
 
-# Building numbers are a fallback for stored/diagnostic rows that do not contain
-# house_href. Keep this mapping explicit: numbers can repeat outside Minsk World.
-OFFICIAL_ADDRESS_BY_BUILDING_NUMBER = {
-    '11.2': 'Игоря Лученка ул, 22, Минск',
+BUILDING_NUMBER_BY_HOUSE_SLUG = {
+    'dom-everest': '4.2',
+    'dom-kaspian': '11.1', 'kaspian': '11.1',
+    'dom-mediteranian': '11.2', 'mediteranian': '11.2',
+    'dom-kontinental': '21.1', 'kontinental': '21.1',
+    'dom-sofiya': '22.7', 'sofiya': '22.7',
+    'dom-lira': '24.2.1', 'lira': '24.2.1',
+    'dom-orion': '24.2.2', 'orion': '24.2.2',
+    'dom-andromeda': '24.2.3', 'andromeda': '24.2.3',
+    'dom-sirius': '24.2.4', 'sirius': '24.2.4',
+    'dom-vega': '24.2.5', 'vega': '24.2.5',
+    'dom-kalemegdan': '27.5', 'kalemegdan': '27.5',
+    'dom-sad-ermitazh': '27.6', 'sad-ermitazh': '27.6',
+    'dom-shtadt-park': '27.11.1', 'shtadt-park': '27.11.1',
+}
+
+OFFICIAL_ADDRESS_BY_BUILDING_NUMBER = HOUSE_DIRECTORY
+OFFICIAL_ADDRESS_BY_HOUSE_SLUG = {
+    slug: HOUSE_DIRECTORY[number] for slug, number in BUILDING_NUMBER_BY_HOUSE_SLUG.items()
 }
 
 
 def _house_slug(house_href: str | None) -> str | None:
     if not house_href:
         return None
-    path=urlparse(str(house_href)).path
-    parts=[part.casefold() for part in path.split('/') if part]
+    parts = [part.casefold() for part in urlparse(str(house_href)).path.split('/') if part]
     return parts[-1] if parts else None
 
 
 def _building_number(building_name: str | None) -> str | None:
     if not building_name:
         return None
-    match=re.search(r'\d+(?:[.,]\d+)?',str(building_name))
-    return match.group(0).replace(',','.') if match else None
+    match = re.search(r'\d+(?:[.,]\d+)*', str(building_name))
+    return match.group(0).replace(',', '.') if match else None
 
 
-def directory_address(building_name: str | None, house_href: str | None=None) -> str | None:
-    slug=_house_slug(house_href)
+def directory_address(building_name: str | None, house_href: str | None = None) -> str | None:
+    slug = _house_slug(house_href)
     if slug and slug in OFFICIAL_ADDRESS_BY_HOUSE_SLUG:
         return OFFICIAL_ADDRESS_BY_HOUSE_SLUG[slug]
-    number=_building_number(building_name)
+    number = _building_number(building_name)
     return OFFICIAL_ADDRESS_BY_BUILDING_NUMBER.get(number) if number else None
 
 
@@ -42,7 +103,4 @@ def resolved_bir_address(bir) -> str | None:
     """Return BIR's own address or a verified address from the house directory."""
     if bir.official_address:
         return bir.official_address
-    return directory_address(
-        bir.building_name,
-        (bir.raw or {}).get('house_href'),
-    )
+    return directory_address(bir.building_name, (bir.raw or {}).get('house_href'))

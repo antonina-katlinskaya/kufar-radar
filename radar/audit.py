@@ -1,5 +1,6 @@
 import json
 from .matcher import apply_mismatch_policy, match_new
+from .house_directory import resolved_bir_address
 from .store import fp, now, current_bir, inactive_bir
 from .collectors.kufar import is_mw_claimed
 from .config import settings
@@ -27,6 +28,13 @@ class AuditSession:
                   'reason=excluded.reason,updated_at=excluded.updated_at',
                   [k.ad_id,r.obj.object_key,r.confidence,r.reason,ts]
                 ))
+            if not resolved_bir_address(r.obj) and not mismatches:
+                return {
+                  'status':'REVIEW','ad_id':k.ad_id,'object_key':r.obj.object_key,
+                  'confidence':r.confidence,
+                  'reason':'Для дома нет подтверждённого официального адреса',
+                  'mismatches':{'review':('требуется проверка','нет адреса дома в справочнике')}
+                }
             return {
               'status':'MISMATCH' if mismatches else 'OK',
               'ad_id':k.ad_id,
@@ -40,11 +48,25 @@ class AuditSession:
             return {'status':'OUT_OF_SCOPE','ad_id':k.ad_id,'reason':'No Minsk World marker and no Bir match','mismatches':{}}
 
         if r.confidence=='AMBIGUOUS':
-            return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':r.reason,'mismatches':{}}
+            if r.mismatches:
+                return {
+                  'status':'MISMATCH','ad_id':k.ad_id,
+                  'object_key':r.reference.object_key if r.reference else None,
+                  'confidence':r.confidence,'reason':r.reason,'mismatches':r.mismatches
+                }
+            return {
+              'status':'REVIEW','ad_id':k.ad_id,
+              'object_key':r.reference.object_key if r.reference else None,
+              'reason':r.reason,
+              'mismatches':{'review':('требуется проверка','несколько равнозначных помещений BIR')}
+            }
 
         historical=match_new(k,self.inactive_candidates)
         if historical.confidence=='AMBIGUOUS':
-            return {'status':'AMBIGUOUS','ad_id':k.ad_id,'reason':'Historical Bir match is ambiguous','mismatches':{}}
+            return {
+              'status':'REVIEW','ad_id':k.ad_id,'reason':'Historical Bir match is ambiguous',
+              'mismatches':{'review':('требуется проверка','несколько архивных помещений BIR')}
+            }
 
         known=sum(v is not None and v!='' for v in [k.price_eur,k.area,k.rooms,k.floor,k.address])
         if known>=4 and historical.obj and historical.confidence in {'EXACT','HIGH'}:
@@ -66,6 +88,9 @@ class AuditSession:
         elif status=='MISMATCH':
             for field,(a,b) in mism.items():
                 desired[field]=(str(a),json.dumps(b,ensure_ascii=False) if isinstance(b,(dict,list)) else str(b),'NEW_MISMATCH')
+        elif status=='REVIEW':
+            for field,(a,b) in mism.items():
+                desired[field]=(str(a),str(b),'NEEDS_REVIEW')
 
         active=self.active.get(k.ad_id,{})
         new_events=[]

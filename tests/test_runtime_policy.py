@@ -3,11 +3,12 @@ from zoneinfo import ZoneInfo
 import json
 from radar.main import (
     should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets,
-    include_active_event_targets,
+    include_active_event_targets, enqueue_pending_audits,
     summary_line, summary_overview, summary_link_keyboard, telegram_html,
     bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, add_subscriber, consume_invite, process_updates,
-    SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label
+    SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
+    split_mass_records,
 )
 from radar.models import KufarListing
 
@@ -48,11 +49,11 @@ def test_new_profile_baseline_audits_only_listings_touched_today():
     assert targets==[today]
     assert mode=='baseline_today_only'
 
-def test_suspicious_bulk_change_is_silent_rebaseline():
+def test_bulk_change_is_not_discarded():
     items=list(range(1848)); changed=list(range(1846))
     targets,mode=choose_audit_targets(items,changed,1848)
-    assert targets==[]
-    assert mode=='bulk_rebaseline'
+    assert targets==changed
+    assert mode=='bulk_incremental'
 
 def test_small_incremental_change_is_audited():
     items=list(range(1848)); changed=['new','edited']
@@ -84,6 +85,22 @@ class FakeDB:
         return self.state.get(key,default)
     def set_state(self,key,value):
         self.state[key]=value
+
+def test_pending_queue_keeps_changed_ad_until_audit_finishes():
+    item=KufarListing(ad_id='42',url='x',profile_id='11077002')
+    pending=enqueue_pending_audits({},[item])
+    assert pending['42']['profile_id']=='11077002'
+    assert pending['42']['reason']=='new_or_changed'
+    assert pending['42']['attempts']==0
+
+def test_five_same_kind_events_are_grouped_into_one_mass_notice():
+    records=[]
+    for n in range(5):
+        listing=KufarListing(ad_id=str(n),url='x',profile_id='11077002')
+        records.append(({'field_name':'address','new_value':'Квартал','bir_value':'Улица, 2'},listing))
+    mass,singles=split_mass_records(records)
+    assert singles==[]
+    assert len(mass)==1 and mass[0][0]=='address' and len(mass[0][2])==5
 
 class FakeTelegram:
     def __init__(self,updates=None):

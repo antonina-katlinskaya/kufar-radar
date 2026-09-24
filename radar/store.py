@@ -8,6 +8,68 @@ def fp(v): return hashlib.sha256(json.dumps(v,sort_keys=True,ensure_ascii=False,
 def load_current_kufar(db,profile_id):
     return {r['ad_id']:r for r in db.query('SELECT * FROM kufar_ads WHERE profile_id=?',[profile_id])}
 
+def _same(a,b):
+    if a is None or b is None:
+        return a is b
+    try:
+        return float(a)==float(b)
+    except (TypeError,ValueError):
+        return str(a)==str(b)
+
+def _raw_list_time(raw):
+    if isinstance(raw,dict):
+        return raw.get('list_time')
+    try:
+        value=json.loads(raw or '{}')
+        return value.get('list_time') if isinstance(value,dict) else None
+    except (TypeError,ValueError):
+        return None
+
+def _source_price(raw):
+    if not isinstance(raw,dict):
+        try: raw=json.loads(raw or '{}')
+        except (TypeError,ValueError): return None
+    currency=str(raw.get('currency') or '').upper()
+    if not currency:
+        return None
+    for row in raw.get('calculator') or []:
+        if str(row.get('currency') or '').upper()==currency:
+            try: return currency,float(row.get('price'))/100.0
+            except (TypeError,ValueError): return None
+    return None
+
+def price_change_relevant(old,new):
+    """Ignore exchange-rate noise while the listing's original price is unchanged."""
+    old_source=_source_price(old.get('raw_json'))
+    new_source=_source_price(new.raw)
+    if old_source and new_source:
+        return old_source != new_source
+    old_byn, new_byn=old.get('price_byn'),new.price_byn
+    if old_byn is not None and new_byn is not None:
+        try: return abs(float(old_byn)-float(new_byn))>1.0
+        except (TypeError,ValueError): return str(old_byn)!=str(new_byn)
+    old_eur,new_eur=old.get('price_eur'),new.price_eur
+    if old_eur is None or new_eur is None:
+        return old_eur is not new_eur
+    try:
+        base=max(abs(float(old_eur)),1.0)
+        return abs(float(old_eur)-float(new_eur))/base>=0.01
+    except (TypeError,ValueError):
+        return str(old_eur)!=str(new_eur)
+
+def kufar_change_relevant(old,new):
+    if not old or not old.get('active'):
+        return True
+    structural=(
+      ('area',new.area),('rooms',new.rooms),('floor',new.floor),
+      ('address',new.address),('title',new.title),
+    )
+    if any(not _same(old.get(field),value) for field,value in structural):
+        return True
+    if _raw_list_time(old.get('raw_json')) != _raw_list_time(new.raw):
+        return True
+    return price_change_relevant(old,new)
+
 def save_kufar(db,items,profile_id):
     cur=load_current_kufar(db,profile_id); ts=now(); changed=[]; seen=set(); stm=[]
     prev_active=sum(1 for r in cur.values() if r.get('active'))
@@ -16,18 +78,21 @@ def save_kufar(db,items,profile_id):
 
     for x in items:
         seen.add(x.ad_id)
-        f=fp([x.price_eur,x.price_byn,x.area,x.rooms,x.floor,x.address])
+        f=fp([x.price_eur,x.price_byn,x.area,x.rooms,x.floor,x.address,x.title,_raw_list_time(x.raw)])
         old=cur.get(x.ad_id)
-        is_changed=(not old or old.get('fingerprint')!=f or not old.get('active'))
-        if not is_changed:
+        data_changed=(not old or old.get('fingerprint')!=f or not old.get('active'))
+        if not data_changed:
             continue
 
-        changed.append(x)
+        audit_changed=kufar_change_relevant(old,x)
+        if audit_changed:
+            changed.append(x)
         stm.append(("""INSERT INTO kufar_ads(ad_id,profile_id,url,active,first_seen_at,last_seen_at,price_eur,price_byn,area,rooms,floor,address,title,fingerprint,raw_json)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ad_id) DO UPDATE SET url=excluded.url,active=1,last_seen_at=excluded.last_seen_at,price_eur=excluded.price_eur,price_byn=excluded.price_byn,area=excluded.area,rooms=excluded.rooms,floor=excluded.floor,address=excluded.address,title=excluded.title,fingerprint=excluded.fingerprint,raw_json=excluded.raw_json""",
           [x.ad_id,profile_id,x.url,1,(old or {}).get('first_seen_at',ts),ts,x.price_eur,x.price_byn,x.area,x.rooms,x.floor,x.address,x.title,f,json.dumps(x.raw,ensure_ascii=False)]))
-        stm.append(('INSERT INTO kufar_versions(ad_id,observed_at,price_eur,price_byn,area,rooms,floor,address,title,fingerprint,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-          [x.ad_id,ts,x.price_eur,x.price_byn,x.area,x.rooms,x.floor,x.address,x.title,f,json.dumps(x.raw,ensure_ascii=False)]))
+        if audit_changed:
+            stm.append(('INSERT INTO kufar_versions(ad_id,observed_at,price_eur,price_byn,area,rooms,floor,address,title,fingerprint,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+              [x.ad_id,ts,x.price_eur,x.price_byn,x.area,x.rooms,x.floor,x.address,x.title,f,json.dumps(x.raw,ensure_ascii=False)]))
 
     for aid,old in cur.items():
         if old.get('active') and aid not in seen:

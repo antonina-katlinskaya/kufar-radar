@@ -11,20 +11,28 @@ class MatchResult:
     confidence: str
     reason: str
     mismatches: dict
+    reference: BirListing | None = None
 
 def norm_address(v: str | None) -> list[str]:
     if not v: return []
     s=v.lower().replace('ё','е')
     tokens=re.findall(r'[a-zа-я0-9]+',s)
-    stop={'г','город','минск','ул','улица','дом','д','корпус','корп','проспект','пр'}
+    stop={
+      'г','город','минск','ул','улица','дом','д','корпус','корп','проспект','пр',
+      'площадь','пл','жилой','комплекс','жк','квартал',
+    }
     return [t for t in tokens if t not in stop]
 
 def address_equal(a,b):
     aa,bb=norm_address(a),norm_address(b)
     if not aa or not bb: return False
-    na={x for x in aa if x.isdigit()}; nb={x for x in bb if x.isdigit()}
-    if na and nb and not (na & nb): return False
-    wa={x for x in aa if not x.isdigit()}; wb={x for x in bb if not x.isdigit()}
+    na={x for x in aa if any(ch.isdigit() for ch in x)}
+    nb={x for x in bb if any(ch.isdigit() for ch in x)}
+    # Номер дома обязателен с обеих сторон. «Лученка» и «Лученка, 22» —
+    # разные по качеству адреса и больше не считаются совпадением.
+    if bool(na) != bool(nb): return False
+    if na and not (na & nb): return False
+    wa={x for x in aa if x not in na}; wb={x for x in bb if x not in nb}
     return bool(wa and wb and (wa<=wb or wb<=wa or len(wa&wb)>=max(1,min(len(wa),len(wb))-1)))
 
 def round_area_1(v):
@@ -141,5 +149,12 @@ def match_new(k,candidates):
     elif mism<=2 and matches>=3: conf='MEDIUM'
     else: return MatchResult(None,'NONE',f'Best Bir candidate only matches {matches}/{known} comparable fields',{})
     tied=[x for x in scored if x[0]==best[0] and x[1]==best[1]]
-    if len(tied)>1: return MatchResult(None,'AMBIGUOUS',f'{len(tied)} Bir candidates tie at an otherwise acceptable score',{})
+    if len(tied)>1:
+        reason=f'{len(tied)} Bir candidates tie at an otherwise acceptable score'
+        addresses=[resolved_bir_address(x[2]) for x in tied]
+        consensus=addresses[0] if addresses and all(addresses) else None
+        if consensus and all(address_equal(consensus,address) for address in addresses[1:]):
+            if not k.address or not address_equal(k.address,consensus):
+                return MatchResult(None,'AMBIGUOUS',reason,{'address':(k.address,consensus)},tied[0][2])
+        return MatchResult(None,'AMBIGUOUS',reason,{},tied[0][2])
     return MatchResult(b,conf,f'{matches}/{known} comparable fields match; {mism} disagree',mismatch_map(k,b))
