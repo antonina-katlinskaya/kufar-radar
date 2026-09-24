@@ -80,7 +80,9 @@ HOUSE_NAMES={
 
 FRESH_SCOPE_STATE='fresh_scope_v3_applied'
 PENDING_AUDITS_STATE='pending_audits_v1'
-STRICT_ADDRESS_RECHECK_STATE='strict_address_v1_recheck_done'
+STRICT_ADDRESS_RECHECK_STATE='strict_address_v2_recheck_done'
+STRICT_BACKFILL_CLEANUP_STATE='strict_address_v1_cleanup_done'
+STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 AUDIT_BATCH_LIMIT=200
 
 PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
@@ -455,11 +457,23 @@ def enqueue_pending_audits(pending,items,reason='new_or_changed'):
         }
     return pending
 
-def today_version_ad_ids(db,local_now=None):
-    local_now=local_now or datetime.now(MINSK)
-    start=datetime.combine(local_now.date(),datetime.min.time(),tzinfo=MINSK).astimezone(timezone.utc).isoformat()
-    rows=db.query('SELECT DISTINCT ad_id FROM kufar_versions WHERE observed_at>=?',[start])
-    return {str(row['ad_id']) for row in rows}
+def fresh_listing_ids(items,local_now=None):
+    return {item.ad_id for item in items if listing_is_today(item,local_now)}
+
+def cleanup_polluted_strict_backfill(db,pending):
+    """Undo v1 backfill fed by legacy FX-noisy versions; fresh cards are re-audited below."""
+    if db.get_state(STRICT_BACKFILL_CLEANUP_STATE,'')=='1':
+        return 0
+    polluted={ad_id for ad_id,row in pending.items() if row.get('reason')=='strict_address_recheck'}
+    for ad_id in polluted:
+        pending.pop(ad_id,None)
+    ts=datetime.now(timezone.utc).isoformat()
+    db.execute(
+      'UPDATE events SET active=0,resolved_at=? WHERE active=1 AND occurred_at>=?',
+      [ts,STRICT_BACKFILL_CUTOFF]
+    )
+    db.set_state(STRICT_BACKFILL_CLEANUP_STATE,'1')
+    return len(polluted)
 
 def archive_legacy_events_once(db):
     if db.get_state(FRESH_SCOPE_STATE,'')=='1': return 0
@@ -701,6 +715,7 @@ async def run():
 
     bir_changed=await collect_bir(db,force=bool(force_chats))
     pending=load_pending_audits(db)
+    cleaned_polluted_pending=cleanup_polluted_strict_backfill(db,pending)
     profile_runs=[]; targets=[]; all_items=[]
     for profile in KUFAR_PROFILES:
         items,changed,previous_active=await collect_kufar(db,profile)
@@ -724,7 +739,7 @@ async def run():
     today_ids=set()
     strict_recheck=db.get_state(STRICT_ADDRESS_RECHECK_STATE,'')!='1'
     if force_chats or strict_recheck:
-        today_ids=today_version_ad_ids(db)
+        today_ids=fresh_listing_ids(all_items,datetime.now(MINSK))
         enqueue_pending_audits(
           pending,[item for item in all_items if item.ad_id in today_ids],
           reason='manual_today' if force_chats else 'strict_address_recheck'
@@ -754,6 +769,7 @@ async def run():
       f"archived_legacy_events={archived_legacy_events} "
       f"rounded_area_events_closed={rounded_area_events_closed} "
       f"rechecked_active_events={rechecked_active_events} "
+      f"cleaned_polluted_pending={cleaned_polluted_pending} "
     )
 
     # Existing profiles audit only incremental NEW/EDITED/REAPPEARED cards.

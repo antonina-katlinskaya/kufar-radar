@@ -8,7 +8,7 @@ from radar.main import (
     bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, add_subscriber, consume_invite, process_updates,
     SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
-    split_mass_records,
+    split_mass_records, fresh_listing_ids,
 )
 from radar.models import KufarListing
 
@@ -92,6 +92,11 @@ def test_pending_queue_keeps_changed_ad_until_audit_finishes():
     assert pending['42']['profile_id']=='11077002'
     assert pending['42']['reason']=='new_or_changed'
     assert pending['42']['attempts']==0
+
+def test_strict_recheck_uses_kufar_publication_time_not_legacy_versions():
+    today=KufarListing(ad_id='1',url='x',profile_id='p',raw={'list_time':'2026-09-24T08:00:00Z'})
+    old=KufarListing(ad_id='2',url='x',profile_id='p',raw={'list_time':'2026-09-22T08:00:00Z'})
+    assert fresh_listing_ids([today,old],datetime(2026,9,24,16,0,tzinfo=MINSK))=={'1'}
 
 def test_five_same_kind_events_are_grouped_into_one_mass_notice():
     records=[]
