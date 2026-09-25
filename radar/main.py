@@ -14,9 +14,10 @@ from .matcher import area_close
 
 MINSK=ZoneInfo('Europe/Minsk')
 CHECK_BUTTON='🔄 Проверить сейчас'
-MAIN_KEYBOARD=[[CHECK_BUTTON]]
+AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
+MAIN_KEYBOARD=[[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
 # Versioned state deliberately forces a one-time owner-only keyboard restore.
-KEYBOARD_STATE='telegram_main_keyboard_v5_owner_only_sent'
+KEYBOARD_STATE='telegram_main_keyboard_v6_review_button_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
@@ -161,6 +162,7 @@ def bot_action(text):
     if value.startswith('/invite'): return 'invite'
     if value.startswith('/start'): return 'start'
     if value.startswith('/check') or value==CHECK_BUTTON: return 'check'
+    if value.startswith('/review') or value==AMBIGUOUS_BUTTON: return 'review'
     if value.startswith('/state') or value.startswith('/violations') or value=='📋 Показать расхождения': return 'state'
     return None
 
@@ -573,7 +575,7 @@ def active_event_type_counts(db):
 
 def process_updates(db,tg):
     offset=int(db.get_state('telegram_offset','0') or 0)
-    force_chats=set(); show_chats=set(); joined_chats=set()
+    force_chats=set(); show_chats=set(); review_chats=set(); joined_chats=set()
     ups=tg.get_updates(offset)
     for u in ups:
         offset=max(offset,int(u['update_id'])+1)
@@ -615,6 +617,8 @@ def process_updates(db,tg):
                 force_chats.add(cid)
             elif action=='state':
                 show_chats.add(cid)
+            elif action=='review':
+                review_chats.add(cid)
             elif action=='invite' and cid==str(owner):
                 send_invite(db,tg,cid)
         elif 'callback_query' in u:
@@ -623,8 +627,9 @@ def process_updates(db,tg):
             tg.answer_callback(q['id'])
             if q.get('data')=='check_now': force_chats.add(cid)
             if q.get('data') in {'state_now','violations'}: show_chats.add(cid)
+            if q.get('data')=='review_cases': review_chats.add(cid)
     db.set_state('telegram_offset',str(offset))
-    return force_chats,show_chats,joined_chats
+    return force_chats,show_chats,review_chats,joined_chats
 
 def summary_rows(db):
     return db.query(
@@ -652,6 +657,40 @@ def service_event_counts(db):
       [settings.live_cutoff_utc]
     )
     return {row['field_name']:int(row['n']) for row in rows}
+
+def review_rows(db):
+    return db.query(
+      '''SELECT e.*, k.profile_id, k.url, k.address, k.area, k.rooms, k.floor,
+                b.building_name, b.official_address, b.unit_no
+         FROM events e
+         JOIN kufar_ads k ON k.ad_id=e.ad_id
+         LEFT JOIN bir_objects b ON b.object_key=e.object_key
+         WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
+           AND e.field_name='review'
+         ORDER BY e.occurred_at DESC''',
+      [settings.live_cutoff_utc]
+    )
+
+def compact_review_summary(rows):
+    if not rows:
+        return '✅ **Неоднозначных случаев нет**'
+    parts=[f"⚠️ **НЕОДНОЗНАЧНЫЕ СЛУЧАИ — {len(rows)}**",'']
+    for index,row in enumerate(rows,1):
+        house=card_house_label(row) or row.get('building_name') or 'дом не определён'
+        unit=f"пом. {row.get('unit_no')}" if row.get('unit_no') else 'помещение не определено'
+        reason=row.get('bir_value') or row.get('new_value') or 'требуется ручная проверка'
+        reason=re.sub(r'\s+',' ',str(reason)).strip()
+        parts.append(
+          f"{index}. **{profile_label(row.get('profile_id'))}** · {house} · {unit}\n"
+          f"   {reason}"
+        )
+    text='\n'.join(parts)
+    if len(text)>3900:
+        text=text[:3850].rsplit('\n',1)[0]+'\n\n…список сокращён до лимита Telegram.'
+    return text
+
+def send_review_summary(db,tg,chat):
+    tg.send(chat,telegram_html(compact_review_summary(review_rows(db))),parse_mode='HTML')
 
 def summary_card(r,bir_checked_at=None):
     field=r.get('field_name')
@@ -777,7 +816,7 @@ def should_send_morning_summary(db,local_now):
 
 async def run():
     db=D1(); tg=Telegram()
-    force_chats,show_chats,joined_chats=process_updates(db,tg)
+    force_chats,show_chats,review_chats,joined_chats=process_updates(db,tg)
     auto_chats=automatic_chat_ids(db)
     owner=db.get_state('telegram_chat_id')
     install_keyboard=bool(auto_chats and db.get_state(KEYBOARD_STATE,'')!='1')
@@ -918,7 +957,13 @@ async def run():
     for chat in force_chats|joined_chats:
         safe_state_summary(db,tg,chat,keyboard=True)
 
-    if auto_chats and install_keyboard and not morning and not force_chats and not show_chats and not joined_chats:
+    for chat in review_chats:
+        try:
+            send_review_summary(db,tg,chat)
+        except Exception as exc:
+            print(f'TELEGRAM_SEND_ERROR chat={chat} type={type(exc).__name__} detail={exc}')
+
+    if auto_chats and install_keyboard and not morning and not force_chats and not show_chats and not review_chats and not joined_chats:
         restored=False
         for chat in auto_chats:
             restored=safe_send(

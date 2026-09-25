@@ -5,10 +5,11 @@ from radar.main import (
     should_live_notify, fmt_area, fmt_dt_minsk, choose_audit_targets,
     include_active_event_targets, enqueue_pending_audits,
     summary_line, summary_overview, summary_link_keyboard, telegram_html,
-    bot_action, CHECK_BUTTON, MAIN_KEYBOARD, start_payload,
+    bot_action, CHECK_BUTTON, AMBIGUOUS_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, automatic_chat_ids, add_subscriber, consume_invite, process_updates,
     SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
     split_mass_records, actionable_event_records, reliable_today_version_ad_ids,
+    compact_review_summary,
 )
 from radar.models import KufarListing
 
@@ -72,7 +73,8 @@ def test_bir_refresh_rechecks_only_ads_with_current_active_events():
 
 def test_persistent_keyboard_buttons_are_actions():
     assert bot_action(CHECK_BUTTON)=='check'
-    assert MAIN_KEYBOARD==[[CHECK_BUTTON]]
+    assert bot_action(AMBIGUOUS_BUTTON)=='review'
+    assert MAIN_KEYBOARD==[[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
     assert bot_action('/check')=='check'
     assert bot_action('/violations')=='state'
     assert bot_action('/invite')=='invite'
@@ -156,8 +158,8 @@ def test_sister_start_gets_keyboard_and_current_summary_request():
       'update_id':7,
       'message':{'chat':{'id':200,'type':'private'},'text':'/start secret-link'},
     }])
-    force,show,joined=process_updates(db,tg)
-    assert force==set() and show==set() and joined=={'200'}
+    force,show,review,joined=process_updates(db,tg)
+    assert force==set() and show==set() and review==set() and joined=={'200'}
     assert subscribed_chat_ids(db)==['100','200']
     assert tg.sent[0][2]['reply_keyboard']==MAIN_KEYBOARD
     assert 'Автоматические уведомления получает владелец' in tg.sent[0][1]
@@ -171,8 +173,31 @@ def test_manual_check_responds_to_requesting_subscriber():
       'update_id':8,
       'message':{'chat':{'id':200,'type':'private'},'text':CHECK_BUTTON},
     }])
-    force,show,joined=process_updates(db,tg)
-    assert force=={'200'} and show==set() and joined==set()
+    force,show,review,joined=process_updates(db,tg)
+    assert force=={'200'} and show==set() and review==set() and joined==set()
+
+def test_ambiguous_button_opens_only_internal_review_list():
+    db=FakeDB({
+      'telegram_chat_id':'100',
+      SUBSCRIBERS_STATE:json.dumps(['100','200']),
+    })
+    tg=FakeTelegram([{
+      'update_id':9,
+      'message':{'chat':{'id':200,'type':'private'},'text':AMBIGUOUS_BUTTON},
+    }])
+    force,show,review,joined=process_updates(db,tg)
+    assert force==set() and show==set() and review=={'200'} and joined==set()
+
+def test_ambiguous_cases_are_rendered_as_one_compact_list():
+    rows=[{
+      'profile_id':'11077002','building_name':'11.2','unit_no':'4.47',
+      'bir_value':'несколько равнозначных помещений BIR',
+    }]
+    out=compact_review_summary(rows)
+    assert '⚠️ **НЕОДНОЗНАЧНЫЕ СЛУЧАИ — 1**' in out
+    assert '**Ирина Барашенко** · Дом 11.2 · пом. 4.47' in out
+    assert 'несколько равнозначных помещений BIR' in out
+    assert compact_review_summary([])=='✅ **Неоднозначных случаев нет**'
 
 def test_start_payload_accepts_telegram_deep_link_format():
     assert start_payload('/start abc_DEF-123')=='abc_DEF-123'
