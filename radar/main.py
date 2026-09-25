@@ -17,7 +17,7 @@ CHECK_BUTTON='🔄 Проверить сейчас'
 AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
 MAIN_KEYBOARD=[[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
 # Versioned state deliberately forces a one-time owner-only keyboard restore.
-KEYBOARD_STATE='telegram_main_keyboard_v6_review_button_sent'
+KEYBOARD_STATE='telegram_main_keyboard_v7_two_buttons_owner_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
@@ -243,6 +243,8 @@ def card_house_label(b):
     slug=urlparse(href).path.rstrip('/').split('/')[-1].lower()
     name=HOUSE_NAMES.get(slug)
     number=b.get('building_name')
+    if number:
+        number=re.sub(r'^\s*дом\s+','',str(number),flags=re.IGNORECASE)
     if name and number: return f"{name} · дом {number}"
     return name or (f"Дом {number}" if number else None)
 
@@ -661,7 +663,8 @@ def service_event_counts(db):
 def review_rows(db):
     return db.query(
       '''SELECT e.*, k.profile_id, k.url, k.address, k.area, k.rooms, k.floor,
-                b.building_name, b.official_address, b.unit_no
+                b.building_name, b.official_address, b.unit_no,
+                b.raw_json AS bir_raw_json
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
@@ -689,8 +692,34 @@ def compact_review_summary(rows):
         text=text[:3850].rsplit('\n',1)[0]+'\n\n…список сокращён до лимита Telegram.'
     return text
 
+def compact_review_summary_html(rows):
+    if not rows:
+        return '<b>✅ Неоднозначных случаев нет</b>'
+    parts=[f"⚠️ <b>НЕОДНОЗНАЧНЫЕ СЛУЧАИ — {len(rows)}</b>",'']
+    for index,row in enumerate(rows,1):
+        house=card_house_label(row) or row.get('building_name') or 'дом не определён'
+        unit=f"пом. {row.get('unit_no')}" if row.get('unit_no') else 'помещение не определено'
+        reason=row.get('bir_value') or row.get('new_value') or 'требуется ручная проверка'
+        reason=re.sub(r'\s+',' ',str(reason)).strip()
+        links=[]
+        if row.get('url'):
+            links.append(f'<a href="{html.escape(str(row["url"]),quote=True)}">Kufar</a>')
+        bir_url=bir_link_from_row(row) if row.get('object_key') else settings.bir_search_url
+        if bir_url:
+            links.append(f'<a href="{html.escape(str(bir_url),quote=True)}">BIR</a>')
+        parts.append(
+          f"{index}. <b>{html.escape(profile_label(row.get('profile_id')))}</b> · "
+          f"{html.escape(str(house))} · {html.escape(str(unit))}\n"
+          f"   {html.escape(reason)}\n"
+          f"   🔗 {' · '.join(links)}"
+        )
+    text='\n'.join(parts)
+    if len(text)>4000:
+        text=text[:3900].rsplit('\n',1)[0]+'\n\n…список сокращён до лимита Telegram.'
+    return text
+
 def send_review_summary(db,tg,chat):
-    tg.send(chat,telegram_html(compact_review_summary(review_rows(db))),parse_mode='HTML')
+    tg.send(chat,compact_review_summary_html(review_rows(db)),parse_mode='HTML')
 
 def summary_card(r,bir_checked_at=None):
     field=r.get('field_name')
@@ -968,7 +997,8 @@ async def run():
         for chat in auto_chats:
             restored=safe_send(
               tg,chat,
-              '🔄 Кнопка «Проверить сейчас» снова закреплена внизу чата.',
+              '🔄 Кнопки «Проверить сейчас» и «Неоднозначные случаи» '
+              'закреплены внизу чата.',
               reply_keyboard=MAIN_KEYBOARD
             ) or restored
         if restored:

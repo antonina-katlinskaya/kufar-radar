@@ -9,7 +9,7 @@ from radar.main import (
     subscribed_chat_ids, automatic_chat_ids, add_subscriber, consume_invite, process_updates,
     SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
     split_mass_records, actionable_event_records, reliable_today_version_ad_ids,
-    compact_review_summary,
+    compact_review_summary, compact_review_summary_html, card_house_label,
 )
 from radar.models import KufarListing
 
@@ -198,6 +198,20 @@ def test_ambiguous_cases_are_rendered_as_one_compact_list():
     assert '**Ирина Барашенко** · Дом 11.2 · пом. 4.47' in out
     assert 'несколько равнозначных помещений BIR' in out
     assert compact_review_summary([])=='✅ **Неоднозначных случаев нет**'
+
+def test_ambiguous_cases_have_compact_clickable_links():
+    rows=[{
+      'profile_id':'11077002','building_name':'Дом 27.6','unit_no':'73',
+      'bir_value':'несколько равнозначных помещений BIR',
+      'url':'https://re.kufar.by/vi/123','object_key':'x',
+      'bir_raw_json':json.dumps({'house_href':'/dom-orion/'}),
+    }]
+    out=compact_review_summary_html(rows)
+    assert 'Орион · дом 27.6' in out
+    assert 'Дом Дом' not in out
+    assert '<a href="https://re.kufar.by/vi/123">Kufar</a>' in out
+    assert '<a href="https://bir.by/dom-orion/">BIR</a>' in out
+    assert card_house_label({'building_name':'Дом 27.6'})=='Дом 27.6'
 
 def test_start_payload_accepts_telegram_deep_link_format():
     assert start_payload('/start abc_DEF-123')=='abc_DEF-123'
