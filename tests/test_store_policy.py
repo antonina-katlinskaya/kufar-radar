@@ -40,7 +40,7 @@ def test_exchange_rate_changes_are_ignored_when_original_currency_price_is_stabl
 
 
 def test_save_kufar_reuses_snapshot_for_previous_active_count():
-    item=listing()
+    item=listing(price_byn=100500)
     existing=old_row(ad_id='1',profile_id='p',fingerprint='old',first_seen_at='2026-09-24T00:00:00Z')
 
     class SnapshotDB:
