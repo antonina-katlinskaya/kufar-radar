@@ -433,11 +433,9 @@ async def collect_bir(db,force=False):
 
 async def collect_kufar(db,profile):
     profile_id=profile['id']
-    rows=db.query('SELECT COUNT(*) AS n FROM kufar_ads WHERE active=1 AND profile_id=?',[profile_id])
-    previous_active=int(rows[0]['n']) if rows else 0
     c=KufarCollector(profile_id,profile.get('contact_person'))
     items=await c.collect(); save_diag(db,f'kufar:{profile_id}',c.diagnostics)
-    changed=save_kufar(db,items,profile_id)
+    changed,previous_active=save_kufar(db,items,profile_id)
     db.set_state('last_kufar_success',datetime.now(timezone.utc).isoformat())
     db.set_state(f'last_kufar_count:{profile_id}',str(len(items)))
     return items,changed,previous_active
