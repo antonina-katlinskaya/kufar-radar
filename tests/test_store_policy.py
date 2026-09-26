@@ -1,5 +1,5 @@
 from radar.models import KufarListing
-from radar.store import kufar_change_relevant, price_change_relevant
+from radar.store import kufar_change_relevant, price_change_relevant, save_kufar
 
 
 def listing(**kwargs):
@@ -37,3 +37,25 @@ def test_exchange_rate_changes_are_ignored_when_original_currency_price_is_stabl
     assert not price_change_relevant(old,listing(price_eur=29900,price_byn=101000,raw=raw))
     changed_raw=dict(raw,calculator=[{'currency':'USD','price':'3600000'}])
     assert price_change_relevant(old,listing(raw=changed_raw))
+
+
+def test_save_kufar_reuses_snapshot_for_previous_active_count():
+    item=listing()
+    existing=old_row(ad_id='1',profile_id='p',fingerprint='old',first_seen_at='2026-09-24T00:00:00Z')
+
+    class SnapshotDB:
+        def __init__(self):
+            self.queries=[]
+            self.batches=[]
+        def query(self,sql,params):
+            self.queries.append((sql,params))
+            return [existing]
+        def batch(self,statements):
+            self.batches.extend(statements)
+
+    db=SnapshotDB()
+    changed,previous_active=save_kufar(db,[item],'p')
+    assert previous_active==1
+    assert changed==[item]
+    assert len(db.queries)==1
+    assert db.queries[0][0]=='SELECT * FROM kufar_ads WHERE profile_id=?'
