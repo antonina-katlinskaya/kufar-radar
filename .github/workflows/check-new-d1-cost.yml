@@ -1,0 +1,70 @@
+name: Check new D1 price-alert cost
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Measure incremental query cost without Telegram
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          NEW_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          from datetime import datetime, timedelta, timezone
+
+          since=(datetime.now(timezone.utc)-timedelta(minutes=30)).isoformat()
+          sql="""
+          WITH changed_ids AS (
+              SELECT ad_id
+              FROM kufar_bridge_events INDEXED BY kufar_bridge_events_time_ad
+              WHERE observed_at > ?
+              UNION ALL
+              SELECT p.ad_id
+              FROM bir_events e INDEXED BY bir_events_time_object
+              JOIN kufar_match_proposals p INDEXED BY kufar_proposals_bir
+                ON p.proposed_bir_id=e.object_id
+              WHERE e.observed_at > ?
+              UNION ALL
+              SELECT ad_id
+              FROM kufar_match_proposals INDEXED BY kufar_proposals_computed_ad
+              WHERE computed_at > ?
+          ),
+          c AS (
+              SELECT DISTINCT ad_id FROM changed_ids
+          )
+          SELECT COUNT(*) AS changed_ads FROM c
+          """
+          url=(
+              f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CF_ACCOUNT_ID']}"
+              f"/d1/database/{os.environ['NEW_D1_DATABASE_ID']}/query"
+          )
+          req=urllib.request.Request(
+              url,
+              data=json.dumps({'sql':sql,'params':[since,since,since]}).encode(),
+              headers={
+                  'Authorization':'Bearer '+os.environ['CF_D1_API_TOKEN'],
+                  'Content-Type':'application/json'
+              },
+              method='POST'
+          )
+          with urllib.request.urlopen(req,timeout=60) as response:
+              body=json.loads(response.read())
+          if not body.get('success'):
+              raise SystemExit(body)
+          result=(body.get('result') or [{}])[0]
+          meta=result.get('meta') or {}
+          rows=(result.get('results') or [{}])
+          print('changed_ads', rows[0].get('changed_ads',0))
+          print('rows_read', meta.get('rows_read'))
+          print('rows_written', meta.get('rows_written'))
+          print('duration_ms', meta.get('duration'))
+          PY
