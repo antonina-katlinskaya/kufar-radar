@@ -97,37 +97,49 @@ def main():
     rows = db.query("""
         WITH changed_ids AS (
             SELECT ad_id
-            FROM kufar_bridge_events
+            FROM kufar_bridge_events INDEXED BY kufar_bridge_events_time_ad
             WHERE observed_at > ?
-            UNION
+            UNION ALL
             SELECT p.ad_id
-            FROM bir_events e
-            JOIN kufar_match_proposals p ON p.proposed_bir_id=e.object_id
+            FROM bir_events e INDEXED BY bir_events_time_object
+            JOIN kufar_match_proposals p INDEXED BY kufar_proposals_bir
+              ON p.proposed_bir_id=e.object_id
             WHERE e.observed_at > ?
-            UNION
+            UNION ALL
             SELECT ad_id
-            FROM kufar_match_proposals
+            FROM kufar_match_proposals INDEXED BY kufar_proposals_computed_ad
             WHERE computed_at > ?
-            UNION
-            SELECT p.ad_id
-            FROM kufar_match_proposals p
-            LEFT JOIN kufar_price_alert_state a ON a.ad_id=p.ad_id
-            WHERE p.level='ADDRESS_UNIQUE' AND a.ad_id IS NULL
+        ),
+        c AS (
+            SELECT DISTINCT ad_id FROM changed_ids
         )
-        SELECT s.ad_id,s.profile_id,s.bir_id,s.bir_house,s.unit_number,s.kufar_area,s.kufar_rooms,s.kufar_floor,s.kufar_address,
-               s.kufar_eur,s.bir_quick_eur,s.kufar_checked_at,s.bir_checked_at,
-               s.review_status,k.list_time,k.raw_json,
+        SELECT k.ad_id,k.profile_id,p.proposed_bir_id AS bir_id,b.house AS bir_house,
+               json_extract(b.detail_json,'$.nomerPomeschenia') AS unit_number,
+               k.area AS kufar_area,k.rooms AS kufar_rooms,k.floor AS kufar_floor,k.address AS kufar_address,
+               k.price_eur AS kufar_eur,json_extract(b.detail_json,'$.Rassrochka10_cena') AS bir_quick_eur,
+               k.observed_at AS kufar_checked_at,b.detail_fetched_at AS bir_checked_at,
+               CASE
+                 WHEN ROUND(k.price_eur,0)<ROUND(json_extract(b.detail_json,'$.Rassrochka10_cena'),0) THEN 'PRICE_REVIEW'
+                 WHEN ROUND(k.price_eur,0)>ROUND(json_extract(b.detail_json,'$.Rassrochka10_cena'),0) THEN 'PRICE_HIGHER'
+                 ELSE 'NO_PRICE_GAP'
+               END AS review_status,
+               k.list_time,k.raw_json,
                a.bir_id AS previous_bir_id,a.kufar_eur AS previous_kufar,
                a.bir_eur AS previous_bir,a.is_lower AS previous_lower
-        FROM changed_ids c
-        JOIN bir_kufar_strong_candidates s ON s.ad_id=c.ad_id
-        JOIN kufar_ads_live k ON k.ad_id=s.ad_id
-        LEFT JOIN kufar_price_alert_state a ON a.ad_id=s.ad_id
-        WHERE s.bir_id IS NOT NULL AND s.kufar_eur>0 AND s.bir_quick_eur>0
-          AND s.bir_status='Свободен'
-          AND julianday('now')-julianday(s.kufar_checked_at)<2.0/24
-          AND julianday('now')-julianday(s.bir_checked_at)<1.0
-          AND s.review_status IN ('PRICE_REVIEW','NO_PRICE_GAP','PRICE_HIGHER')
+        FROM c
+        CROSS JOIN kufar_match_proposals p
+        CROSS JOIN kufar_ads_live k
+        CROSS JOIN bir_objects b
+        LEFT JOIN kufar_reference_snapshot r ON r.ad_id=c.ad_id
+        LEFT JOIN kufar_price_alert_state a ON a.ad_id=c.ad_id
+        WHERE p.ad_id=c.ad_id AND p.level='ADDRESS_UNIQUE'
+          AND k.ad_id=c.ad_id AND k.present=1 AND k.price_eur>0
+          AND b.id=p.proposed_bir_id AND b.present=1
+          AND (r.bir_id IS NULL OR r.bir_id=p.proposed_bir_id)
+          AND json_extract(b.detail_json,'$.Rassrochka10_cena')>0
+          AND json_extract(b.detail_json,'$.status')='Свободен'
+          AND julianday('now')-julianday(k.observed_at)<2.0/24
+          AND julianday('now')-julianday(b.detail_fetched_at)<1.0
     """, [since, since, since])
     queued = 0
     for row in rows:
