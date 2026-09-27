@@ -1,7 +1,7 @@
 """Send new Kufar/Bir price discrepancies through the existing Kufar Radar bot."""
 import json
 from html import escape
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from radar.d1 import D1
@@ -91,13 +91,36 @@ def main():
     if not chat:
         raise RuntimeError('Личный чат старого бота не найден')
     db = new_database()
+    run_started = datetime.now(timezone.utc).isoformat()
+    state_rows = db.query("SELECT value FROM service_state WHERE key='price_alerts_last_checked' LIMIT 1")
+    since = state_rows[0]['value'] if state_rows else '1970-01-01T00:00:00+00:00'
     rows = db.query("""
+        WITH changed_ids AS (
+            SELECT ad_id
+            FROM kufar_bridge_events
+            WHERE observed_at > ?
+            UNION
+            SELECT p.ad_id
+            FROM bir_events e
+            JOIN kufar_match_proposals p ON p.proposed_bir_id=e.object_id
+            WHERE e.observed_at > ?
+            UNION
+            SELECT ad_id
+            FROM kufar_match_proposals
+            WHERE computed_at > ?
+            UNION
+            SELECT p.ad_id
+            FROM kufar_match_proposals p
+            LEFT JOIN kufar_price_alert_state a ON a.ad_id=p.ad_id
+            WHERE p.level='ADDRESS_UNIQUE' AND a.ad_id IS NULL
+        )
         SELECT s.ad_id,s.profile_id,s.bir_id,s.bir_house,s.unit_number,s.kufar_area,s.kufar_rooms,s.kufar_floor,s.kufar_address,
                s.kufar_eur,s.bir_quick_eur,s.kufar_checked_at,s.bir_checked_at,
                s.review_status,k.list_time,k.raw_json,
                a.bir_id AS previous_bir_id,a.kufar_eur AS previous_kufar,
                a.bir_eur AS previous_bir,a.is_lower AS previous_lower
-        FROM bir_kufar_strong_candidates s
+        FROM changed_ids c
+        JOIN bir_kufar_strong_candidates s ON s.ad_id=c.ad_id
         JOIN kufar_ads_live k ON k.ad_id=s.ad_id
         LEFT JOIN kufar_price_alert_state a ON a.ad_id=s.ad_id
         WHERE s.bir_id IS NOT NULL AND s.kufar_eur>0 AND s.bir_quick_eur>0
@@ -105,7 +128,7 @@ def main():
           AND julianday('now')-julianday(s.kufar_checked_at)<2.0/24
           AND julianday('now')-julianday(s.bir_checked_at)<1.0
           AND s.review_status IN ('PRICE_REVIEW','NO_PRICE_GAP','PRICE_HIGHER')
-    """)
+    """, [since, since, since])
     queued = 0
     for row in rows:
         k, b = whole(row['kufar_eur']), whole(row['bir_quick_eur'])
@@ -135,7 +158,12 @@ def main():
             raise RuntimeError('Старый Telegram бот не подтвердил доставку')
         db.execute("UPDATE kufar_price_alert_queue SET status='sent',sent_at=datetime('now'),attempts=attempts+1,error=NULL WHERE id=?", [item['id']])
         sent += 1
-    print(f'Checked {len(rows)} current matches; queued {queued}; sent {sent}; pending {max(0,len(pending)-sent)}')
+    db.execute(
+        "INSERT INTO service_state(key,value,updated_at) VALUES(?,?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+        ['price_alerts_last_checked', run_started, run_started],
+    )
+    print(f'Checked {len(rows)} changed matches; queued {queued}; sent {sent}; pending {max(0,len(pending)-sent)}')
 
 
 if __name__ == '__main__':
