@@ -9,6 +9,7 @@ from .telegram import Telegram
 from .collectors.kufar import KufarCollector
 from .collectors.bir import BirCollector
 from .store import save_kufar, save_bir
+from .source_snapshot import history_db, load_bir_snapshot
 from .audit import AuditSession
 from .matcher import area_close
 
@@ -421,14 +422,15 @@ def parse_ts(v):
     except: return None
 
 async def collect_bir(db,force=False):
+    source=history_db()
+    items,checked_at=load_bir_snapshot(source)
     last=db.get_state('last_bir_success')
-    if not force and last:
-        dt=parse_ts(last)
-        if dt and datetime.now(timezone.utc)-dt < timedelta(minutes=settings.bir_refresh_minutes):
-            return False
-    c=BirCollector(); items=await c.collect(); save_diag(db,'bir',c.diagnostics); save_bir(db,items)
-    db.set_state('last_bir_success',datetime.now(timezone.utc).isoformat())
+    if not force and last and checked_at and str(last)==str(checked_at):
+        return False
+    save_bir(db,items)
+    db.set_state('last_bir_success',str(checked_at or datetime.now(timezone.utc).isoformat()))
     db.set_state('last_bir_count',str(len(items)))
+    db.set_state('last_bir_source','bir-history-residential')
     return True
 
 async def collect_kufar(db,profile):
