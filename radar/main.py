@@ -6,10 +6,8 @@ from urllib.parse import urljoin, urlparse
 from .config import settings, KUFAR_PROFILES
 from .d1 import D1
 from .telegram import Telegram
-from .collectors.kufar import KufarCollector
-from .collectors.bir import BirCollector
-from .store import save_kufar, save_bir
-from .source_snapshot import history_db, load_bir_snapshot
+from .store import save_kufar, save_bir, current_kufar
+from .source_snapshot import history_db, load_bir_snapshot, load_kufar_profile_snapshot
 from .audit import AuditSession
 from .matcher import area_close
 
@@ -437,11 +435,20 @@ async def collect_kufar(db,profile):
     profile_id=profile['id']
     rows=db.query('SELECT COUNT(*) AS n FROM kufar_ads WHERE active=1 AND profile_id=?',[profile_id])
     previous_active=int(rows[0]['n']) if rows else 0
-    c=KufarCollector(profile_id,profile.get('contact_person'))
-    items=await c.collect(); save_diag(db,f'kufar:{profile_id}',c.diagnostics)
+    source=history_db()
+    try:
+        items,state=load_kufar_profile_snapshot(source,profile_id)
+    except RuntimeError as exc:
+        # No legacy network fallback: keep the last known local snapshot until the
+        # new bridge has completed at least one trustworthy full cycle.
+        items=current_kufar(db,profile_id)
+        print(f'KUFAR_BRIDGE_PENDING profile={profile_id} detail={exc}')
+        return items,[],previous_active
     changed=save_kufar(db,items,profile_id)
-    db.set_state('last_kufar_success',datetime.now(timezone.utc).isoformat())
+    checked_at=state.get('last_success_at') or datetime.now(timezone.utc).isoformat()
+    db.set_state('last_kufar_success',str(checked_at))
     db.set_state(f'last_kufar_count:{profile_id}',str(len(items)))
+    db.set_state(f'last_kufar_source:{profile_id}','kufar-bir-bridge')
     return items,changed,previous_active
 
 def listing_is_today(item,local_now=None):
