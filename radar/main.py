@@ -1007,4 +1007,10 @@ async def run():
             db.set_state(KEYBOARD_STATE,'1')
 
 if __name__=='__main__':
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except RuntimeError as exc:
+        if "exceeded D1's free tier daily row read limit" in str(exc):
+            print('RADAR_SKIPPED D1 daily row-read limit reached; automatic runs resume after the UTC reset')
+        else:
+            raise
