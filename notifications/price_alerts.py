@@ -28,10 +28,31 @@ def euros(value):
     return f'{whole(value):,}'.replace(',', ' ') + ' €'
 
 
-def local_time(value):
+def parse_time(value):
     if not value:
-        return 'не указано'
-    return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(MINSK).strftime('%d.%m.%Y %H:%M')
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).astimezone(MINSK)
+    except (TypeError, ValueError):
+        return None
+
+
+def local_time(value):
+    dt = parse_time(value)
+    return dt.strftime('%d.%m.%Y %H:%M') if dt else 'не указано'
+
+
+def listing_date(raw, list_time):
+    data = json.loads(raw or '{}')
+    placed = parse_time(list_time)
+    updated = None
+    for key in ('update_time', 'last_update_time', 'updated_at', 'modified_at'):
+        candidate = parse_time(data.get(key))
+        if candidate and (updated is None or candidate > updated):
+            updated = candidate
+    if updated and (placed is None or updated > placed):
+        return 'Дата обновления', updated.strftime('%d.%m.%Y %H:%M')
+    return 'Дата размещения', placed.strftime('%d.%m.%Y %H:%M') if placed else 'не указано'
 
 
 def contact(raw, fallback):
@@ -48,27 +69,21 @@ def format_alert(row):
     bir, kufar = whole(row['bir_quick_eur']), whole(row['kufar_eur'])
     house = row['bir_house'] or 'Дом не указан'
     house_number = house.removeprefix('Дом ').strip()
-    house_label = (HOUSE_NAMES.get(house_number, '') + ' · ' if house_number in HOUSE_NAMES else '') + house.lower().replace('дом ', 'дом ', 1)
-    details = [f"Помещение № {row['unit_number'] or 'не указано'}"]
-    if row.get('kufar_rooms') is not None:
-        details.append(f"{row['kufar_rooms']}-комн.")
+    house_name = HOUSE_NAMES.get(house_number)
+    house_label = f"{house_name} · дом {house_number}" if house_name else f"дом {house_number}"
     if row.get('kufar_area') is not None:
-        details.append(f"{str(row['kufar_area']).replace('.', ',')} м²")
-    if row.get('kufar_floor') is not None:
-        details.append(f"{row['kufar_floor']} этаж")
+        area = str(row['kufar_area']).replace('.', ',')
+        house_label += f" · {area} м²"
+    date_label, date_value = listing_date(row['raw_json'], row['list_time'])
     return '\n'.join([
         '🟠 <b>ЦЕНА НА КУФАРЕ НИЖЕ Bir.by</b>',
         '',
         f"👤 <b>{escape(contact(row['raw_json'], row['profile_id']))}</b>",
         f"🏢 <b>{escape(house_label)}</b>",
-        f"📍 {escape(row.get('kufar_address') or 'адрес не указан')}",
-        f"🚪 {escape(' · '.join(details))}",
         '',
-        f'<b>Куфар: {euros(kufar)}</b>',
-        f'<b>Bir.by: {euros(bir)}</b>',
-        f'Ниже на {euros(bir-kufar)}',
-        '',
-        f"🕒 Размещено {local_time(row['list_time'])} · Куфар проверен {local_time(row['kufar_checked_at'])} · Bir.by {local_time(row['bir_checked_at'])}",
+        f'<b>Bir.by: {euros(bir)}</b> → <b>Куфар: {euros(kufar)}</b>',
+        f'🟠 <b>Разница: {euros(bir-kufar)}</b>',
+        f'{date_label}: {date_value}',
     ])
 
 
