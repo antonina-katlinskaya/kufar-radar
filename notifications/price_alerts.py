@@ -57,7 +57,7 @@ def format_alert(row):
     if row.get('kufar_floor') is not None:
         details.append(f"{row['kufar_floor']} этаж")
     return '\n'.join([
-        '🟠 <b>ВЕРОЯТНО: ЦЕНА НА КУФАРЕ НИЖЕ Bir.by</b>',
+        '🟠 <b>ЦЕНА НА КУФАРЕ НИЖЕ Bir.by</b>',
         '',
         f"👤 <b>{escape(contact(row['raw_json'], row['profile_id']))}</b>",
         f"🏢 <b>{escape(house_label)}</b>",
