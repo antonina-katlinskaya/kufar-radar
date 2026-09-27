@@ -2,7 +2,7 @@ import json, os
 from datetime import datetime, timezone, timedelta
 
 from .d1 import D1
-from .models import BirListing
+from .models import BirListing, KufarListing
 
 
 HISTORY_DB_ID = os.getenv(
@@ -10,6 +10,7 @@ HISTORY_DB_ID = os.getenv(
     'd8dd0219-8070-4f48-980d-312eba26209e',
 )
 MAX_BIR_AGE = timedelta(minutes=35)
+MAX_KUFAR_AGE = timedelta(minutes=50)
 
 
 def history_db():
@@ -86,3 +87,55 @@ def load_bir_snapshot(db):
             raw=raw,
         ))
     return items, scan.get('checked_at')
+
+
+def load_kufar_profile_snapshot(db, profile_id):
+    state_rows = db.query(
+        "SELECT cursor,last_cycle_at,last_success_at FROM kufar_bridge_state "
+        "WHERE profile_id=? LIMIT 1",
+        [str(profile_id)],
+    )
+    if not state_rows:
+        raise RuntimeError(f'New Kufar bridge has no state for profile {profile_id}')
+    state = state_rows[0]
+    completed = _parse_ts(state.get('last_cycle_at'))
+    success = _parse_ts(state.get('last_success_at'))
+    if not completed:
+        raise RuntimeError(
+            f'New Kufar bridge has not completed a full cycle for profile {profile_id}'
+        )
+    if not success or datetime.now(timezone.utc) - success.astimezone(timezone.utc) > MAX_KUFAR_AGE:
+        raise RuntimeError(
+            f'New Kufar bridge is stale for profile {profile_id}: '
+            f'last success {state.get("last_success_at")}'
+        )
+
+    rows = db.query(
+        "SELECT ad_id,profile_id,url,price_eur,price_byn,area,rooms,floor,"
+        "address,title,list_time,raw_json "
+        "FROM kufar_ads_live WHERE profile_id=? AND present=1",
+        [str(profile_id)],
+    )
+    items = []
+    for row in rows:
+        try:
+            raw = json.loads(row.get('raw_json') or '{}')
+        except (TypeError, ValueError):
+            raw = {}
+        if row.get('list_time') and not raw.get('list_time'):
+            raw['list_time'] = row.get('list_time')
+        raw['source'] = 'kufar-bir-bridge'
+        items.append(KufarListing(
+            ad_id=str(row['ad_id']),
+            url=row.get('url') or f"https://re.kufar.by/vi/{row['ad_id']}",
+            profile_id=str(row.get('profile_id') or profile_id),
+            price_eur=row.get('price_eur'),
+            price_byn=row.get('price_byn'),
+            area=row.get('area'),
+            rooms=row.get('rooms'),
+            floor=row.get('floor'),
+            address=row.get('address'),
+            title=row.get('title'),
+            raw=raw,
+        ))
+    return items, state
