@@ -3,15 +3,16 @@ from datetime import datetime, timezone
 from .config import settings
 
 class D1:
-    def __init__(self):
+    def __init__(self, database_id=None):
         missing = [k for k,v in {
             'CF_ACCOUNT_ID': settings.cf_account_id,
-            'CF_D1_DATABASE_ID': settings.cf_database_id,
+            'CF_D1_DATABASE_ID': database_id or settings.cf_database_id,
             'CF_D1_API_TOKEN': settings.cf_token,
         }.items() if not v]
         if missing:
             raise RuntimeError('Missing Cloudflare secrets: ' + ', '.join(missing))
-        self.url = f'https://api.cloudflare.com/client/v4/accounts/{settings.cf_account_id}/d1/database/{settings.cf_database_id}/query'
+        self.database_id = database_id or settings.cf_database_id
+        self.url = f'https://api.cloudflare.com/client/v4/accounts/{settings.cf_account_id}/d1/database/{self.database_id}/query'
         self.headers = {'Authorization': f'Bearer {settings.cf_token}', 'Content-Type': 'application/json'}
 
     def _post(self, body):
