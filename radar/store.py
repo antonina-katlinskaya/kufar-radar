@@ -99,7 +99,7 @@ def save_kufar(db,items,profile_id):
             stm.append(('UPDATE kufar_ads SET active=0,last_seen_at=? WHERE ad_id=?',[ts,aid]))
 
     for i in range(0,len(stm),75): db.batch(stm[i:i+75])
-    return changed
+    return changed, prev_active
 
 def save_bir(db,items):
     cur={r['object_key']:r for r in db.query('SELECT * FROM bir_objects')}; ts=now(); seen=set(); stm=[]
