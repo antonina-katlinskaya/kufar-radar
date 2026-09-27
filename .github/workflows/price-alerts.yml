@@ -36,3 +36,5 @@ jobs:
         run: python -m notifications.price_alerts
 
 # Initial delivery check through the existing bot.
+
+# Card layout and button delivery check.
