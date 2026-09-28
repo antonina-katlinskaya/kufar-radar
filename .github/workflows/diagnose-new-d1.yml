@@ -1,0 +1,53 @@
+name: Diagnose new D1
+
+on:
+  push:
+    paths:
+      - '.github/workflows/diagnose-new-d1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read new D1 health
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          NEW_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url=(
+            f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CF_ACCOUNT_ID']}"
+            f"/d1/database/{os.environ['NEW_D1_DATABASE_ID']}/query"
+          )
+          sql="""
+          SELECT 'bir_scan' AS kind,
+                 checked_at AS t1,
+                 status AS v1,
+                 CAST(parsed_count AS TEXT) AS v2
+          FROM bir_scans
+          ORDER BY checked_at DESC LIMIT 5;
+          """
+          def call(sql, params=None):
+              req=urllib.request.Request(
+                  url,
+                  data=json.dumps({'sql':sql,'params':params or []}).encode(),
+                  headers={'Authorization':'Bearer '+os.environ['CF_D1_API_TOKEN'],'Content-Type':'application/json'},
+                  method='POST'
+              )
+              with urllib.request.urlopen(req,timeout=60) as r:
+                  body=json.loads(r.read())
+              if not body.get('success'): raise SystemExit(body)
+              result=(body.get('result') or [{}])[0]
+              print('SQL_RESULTS',json.dumps(result.get('results') or [],ensure_ascii=False))
+              print('SQL_META',json.dumps(result.get('meta') or {},ensure_ascii=False))
+          call(sql)
+          call("SELECT profile_id,last_cycle_at,last_success_at,cursor FROM kufar_bridge_state ORDER BY profile_id")
+          call("SELECT key,value,updated_at FROM service_state ORDER BY updated_at DESC LIMIT 20")
+          PY
