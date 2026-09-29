@@ -586,6 +586,7 @@ def active_event_type_counts(db):
 
 def process_updates(db,tg):
     offset=int(db.get_state('telegram_offset','0') or 0)
+    initial_offset=offset
     force_chats=set(); show_chats=set(); review_chats=set(); joined_chats=set()
     ups=tg.get_updates(offset)
     for u in ups:
@@ -639,7 +640,8 @@ def process_updates(db,tg):
             if q.get('data')=='check_now': force_chats.add(cid)
             if q.get('data') in {'state_now','violations'}: show_chats.add(cid)
             if q.get('data')=='review_cases': review_chats.add(cid)
-    db.set_state('telegram_offset',str(offset))
+    if offset!=initial_offset:
+        db.set_state('telegram_offset',str(offset))
     return force_chats,show_chats,review_chats,joined_chats
 
 def summary_rows(db):
@@ -1019,5 +1021,7 @@ if __name__=='__main__':
     except RuntimeError as exc:
         if "exceeded D1's free tier daily row read limit" in str(exc):
             print('RADAR_SKIPPED D1 daily row-read limit reached; automatic runs resume after the UTC reset')
+        elif "exceeded D1's free tier daily row write limit" in str(exc):
+            print('RADAR_SKIPPED D1 daily row-write limit reached; automatic runs resume after the UTC reset')
         else:
             raise
