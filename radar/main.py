@@ -1023,5 +1023,7 @@ if __name__=='__main__':
             print('RADAR_SKIPPED D1 daily row-read limit reached; automatic runs resume after the UTC reset')
         elif "exceeded D1's free tier daily row write limit" in str(exc):
             print('RADAR_SKIPPED D1 daily row-write limit reached; automatic runs resume after the UTC reset')
+        elif 'D1_QUOTA_PAUSE:' in str(exc):
+            print(f'RADAR_SKIPPED {exc}; source scan must succeed before comparisons resume')
         else:
             raise
