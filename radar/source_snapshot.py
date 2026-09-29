@@ -111,6 +111,13 @@ def load_kufar_profile_snapshot(db, profile_id):
             f'New Kufar bridge has not completed a full cycle for profile {profile_id}'
         )
     if not success or datetime.now(timezone.utc) - success.astimezone(timezone.utc) > MAX_KUFAR_AGE:
+        latest = db.query(
+            'SELECT status,error FROM kufar_import_scans WHERE profile_id=? '
+            'ORDER BY observed_at DESC LIMIT 1', [str(profile_id)]
+        )
+        failure = latest[0] if latest else {}
+        if failure.get('status') == 'rejected' and 'exceeded D1\'s free tier daily row write limit' in str(failure.get('error') or ''):
+            raise RuntimeError(f'D1_QUOTA_PAUSE: Kufar bridge cannot update profile {profile_id} until the UTC reset')
         raise RuntimeError(
             f'New Kufar bridge is stale for profile {profile_id}: '
             f'last success {state.get("last_success_at")}'
