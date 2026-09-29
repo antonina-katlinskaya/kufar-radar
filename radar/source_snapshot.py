@@ -40,6 +40,12 @@ def latest_bir_scan(db):
         raise RuntimeError('New BIR history returned invalid scan time')
     age = datetime.now(timezone.utc) - checked.astimezone(timezone.utc)
     if age > MAX_BIR_AGE:
+        latest = db.query(
+            'SELECT status,error FROM bir_scans ORDER BY checked_at DESC LIMIT 1'
+        )
+        failure = latest[0] if latest else {}
+        if failure.get('status') == 'rejected' and 'exceeded D1\'s free tier daily row write limit' in str(failure.get('error') or ''):
+            raise RuntimeError('D1_QUOTA_PAUSE: BIR history cannot update until the UTC reset')
         raise RuntimeError(
             f'New BIR history is stale: last successful scan {row.get("checked_at")}'
         )
