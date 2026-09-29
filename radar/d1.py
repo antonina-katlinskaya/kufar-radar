@@ -46,4 +46,4 @@ class D1:
 
     def set_state(self, key: str, value: str):
         now = datetime.now(timezone.utc).isoformat()
-        self.execute('INSERT INTO state(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at', [key, value, now])
+        self.execute('INSERT INTO state(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at WHERE state.value IS NOT excluded.value', [key, value, now])
