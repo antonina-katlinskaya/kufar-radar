@@ -92,7 +92,7 @@ def test_two_core_changes_discard_old_passport_and_rematch_new_object():
     old=bir()
     new=bir(
       object_key='bir-2',building_name='12.1',official_address='Леонида Щемелёва, 30',
-      unit_no='3.12',price_regular_eur=51000,area=36.2,rooms=2,floor=8
+      unit_no='3.12',price_regular_eur=54000,price_fast_eur=51000,area=36.2,rooms=2,floor=8
     )
     item=trust(session([old,new]))
     item.recent_versions['ad-1']=[
@@ -109,7 +109,7 @@ def test_two_core_changes_discard_old_passport_and_rematch_new_object():
 def test_two_independent_audits_detect_reuse_even_when_only_area_changed():
     old=bir()
     new=bir(
-      object_key='bir-2',unit_no='8.44',price_regular_eur=51000,area=32.2
+      object_key='bir-2',unit_no='8.44',price_regular_eur=54000,price_fast_eur=51000,area=32.2
     )
     item=trust(session([old,new]))
     result=item.audit(kufar(price_eur=51000,area=32.2))
@@ -174,7 +174,7 @@ def test_audit_session_loads_trusted_passport_and_two_latest_versions():
         rooms INTEGER, floor INTEGER, title TEXT, raw_json TEXT
       );
       INSERT INTO bir_objects VALUES (
-        'bir-1','11.2','Игоря Лученка, 22','8.43',1,47000,NULL,31.1,1,8,'{}'
+        'bir-1','11.2','Игоря Лученка, 22','8.43',1,50000,47000,31.1,1,8,'{}'
       );
       INSERT INTO matches VALUES (
         'ad-1','bir-1','HIGH','2026-09-24T10:00:00+00:00'
