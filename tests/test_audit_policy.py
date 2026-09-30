@@ -6,7 +6,7 @@ import sqlite3
 def bir(**kwargs):
     values=dict(
       object_key='bir-1',building_name='11.2',official_address='Игоря Лученка, 22',
-      unit_no='8.43',price_regular_eur=47000,price_fast_eur=None,
+      unit_no='8.43',price_regular_eur=50000,price_fast_eur=47000,
       area=31.1,rooms=1,floor=8,raw={}
     )
     values.update(kwargs)
@@ -88,11 +88,11 @@ def test_weak_match_is_not_treated_as_object_passport():
     assert result['mismatches']=={}
 
 
-def test_two_core_changes_discard_old_passport_and_rematch_new_object():
+def test_valid_inventory_combo_wins_over_old_passport_after_core_changes():
     old=bir()
     new=bir(
       object_key='bir-2',building_name='12.1',official_address='Леонида Щемелёва, 30',
-      unit_no='3.12',price_regular_eur=51000,area=36.2,rooms=2,floor=8
+      unit_no='3.12',price_regular_eur=54000,price_fast_eur=51000,area=36.2,rooms=2,floor=8
     )
     item=trust(session([old,new]))
     item.recent_versions['ad-1']=[
@@ -100,22 +100,23 @@ def test_two_core_changes_discard_old_passport_and_rematch_new_object():
       {'observed_at':'2026-09-24T07:00:00+00:00','area':31.1,'rooms':1,'floor':8,'title':'Старая карточка','raw_json':'{}'},
     ]
     result=item.audit(kufar(price_eur=51000,area=36.2,rooms=2))
-    assert result['status']=='MISMATCH'  # only the deliberately wrong address remains internal
-    assert 'price' not in result['mismatches'] and 'area' not in result['mismatches']
+    assert result['status']=='OK'
+    assert result['confidence']=='INVENTORY'
+    assert result['mismatches']=={}
     assert result['object_key']=='bir-2'
-    assert any(sql.startswith('DELETE FROM matches') for sql,_ in item.statements)
 
 
-def test_two_independent_audits_detect_reuse_even_when_only_area_changed():
+def test_valid_inventory_combo_short_circuits_passport_when_area_changed():
     old=bir()
     new=bir(
-      object_key='bir-2',unit_no='8.44',price_regular_eur=51000,area=32.2
+      object_key='bir-2',unit_no='8.44',price_regular_eur=54000,price_fast_eur=51000,area=32.2
     )
     item=trust(session([old,new]))
     result=item.audit(kufar(price_eur=51000,area=32.2))
+    assert result['status']=='OK'
+    assert result['confidence']=='INVENTORY'
     assert result['object_key']=='bir-2'
-    assert 'price' not in result['mismatches'] and 'area' not in result['mismatches']
-    assert any(sql.startswith('DELETE FROM matches') for sql,_ in item.statements)
+    assert result['mismatches']=={}
 
 
 def test_title_and_image_support_replacement_when_one_core_field_changes():
@@ -174,7 +175,7 @@ def test_audit_session_loads_trusted_passport_and_two_latest_versions():
         rooms INTEGER, floor INTEGER, title TEXT, raw_json TEXT
       );
       INSERT INTO bir_objects VALUES (
-        'bir-1','11.2','Игоря Лученка, 22','8.43',1,47000,NULL,31.1,1,8,'{}'
+        'bir-1','11.2','Игоря Лученка, 22','8.43',1,50000,47000,31.1,1,8,'{}'
       );
       INSERT INTO matches VALUES (
         'ad-1','bir-1','HIGH','2026-09-24T10:00:00+00:00'
@@ -194,3 +195,23 @@ def test_audit_session_loads_trusted_passport_and_two_latest_versions():
     assert item.preferred['ad-1']=='bir-1'
     assert item.passport_confidence['ad-1']=='HIGH'
     assert [row['id'] for row in item.recent_versions['ad-1']]==[3,2]
+
+
+def test_inventory_filter_ignores_floor_and_old_passport_when_valid_combo_exists():
+    wrong_passport=bir(
+      object_key='bir-605',unit_no='605',area=48.63,rooms=1,floor=9,
+      price_regular_eur=62976,price_fast_eur=56703
+    )
+    valid_other_floor=bir(
+      object_key='bir-131',unit_no='131',area=48.63,rooms=1,floor=3,
+      price_regular_eur=62733,price_fast_eur=56459
+    )
+    item=trust(session([wrong_passport,valid_other_floor]),object_key='bir-605')
+    listing=kufar(price_eur=56459,area=48.6,rooms=1,floor=9)
+
+    result=item.audit(listing)
+
+    assert result['status']=='OK'
+    assert result['confidence']=='INVENTORY'
+    assert result['object_key']=='bir-131'
+    assert result['mismatches']=={}
