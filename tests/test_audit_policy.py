@@ -88,7 +88,7 @@ def test_weak_match_is_not_treated_as_object_passport():
     assert result['mismatches']=={}
 
 
-def test_two_core_changes_discard_old_passport_and_rematch_new_object():
+def test_valid_inventory_combo_wins_over_old_passport_after_core_changes():
     old=bir()
     new=bir(
       object_key='bir-2',building_name='12.1',official_address='Леонида Щемелёва, 30',
@@ -100,22 +100,23 @@ def test_two_core_changes_discard_old_passport_and_rematch_new_object():
       {'observed_at':'2026-09-24T07:00:00+00:00','area':31.1,'rooms':1,'floor':8,'title':'Старая карточка','raw_json':'{}'},
     ]
     result=item.audit(kufar(price_eur=51000,area=36.2,rooms=2))
-    assert result['status']=='MISMATCH'  # only the deliberately wrong address remains internal
-    assert 'price' not in result['mismatches'] and 'area' not in result['mismatches']
+    assert result['status']=='OK'
+    assert result['confidence']=='INVENTORY'
+    assert result['mismatches']=={}
     assert result['object_key']=='bir-2'
-    assert any(sql.startswith('DELETE FROM matches') for sql,_ in item.statements)
 
 
-def test_two_independent_audits_detect_reuse_even_when_only_area_changed():
+def test_valid_inventory_combo_short_circuits_passport_when_area_changed():
     old=bir()
     new=bir(
       object_key='bir-2',unit_no='8.44',price_regular_eur=54000,price_fast_eur=51000,area=32.2
     )
     item=trust(session([old,new]))
     result=item.audit(kufar(price_eur=51000,area=32.2))
+    assert result['status']=='OK'
+    assert result['confidence']=='INVENTORY'
     assert result['object_key']=='bir-2'
-    assert 'price' not in result['mismatches'] and 'area' not in result['mismatches']
-    assert any(sql.startswith('DELETE FROM matches') for sql,_ in item.statements)
+    assert result['mismatches']=={}
 
 
 def test_title_and_image_support_replacement_when_one_core_field_changes():
