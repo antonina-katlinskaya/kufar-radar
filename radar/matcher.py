@@ -57,10 +57,41 @@ def area_close(kufar_area,bir_area):
         return False
     return kufar==bir or kufar==round_area_1(bir)
 
-def price_matches(k,b,tol=1.0):
-    if k is None: return False
-    prices=[p for p in (b.price_fast_eur,b.price_regular_eur) if p is not None]
-    return any(abs(k-p)<=tol for p in prices)
+def price_matches(k,b):
+    """Kufar price must exactly equal BIR's special fast-payment price.
+
+    The regular (higher) BIR price is stored for analytics but is never accepted
+    by the competitor-violation detector.
+    """
+    if k is None or b.price_fast_eur is None:
+        return False
+    try:
+        return Decimal(str(k)) == Decimal(str(b.price_fast_eur))
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+
+def inventory_first_match(k,candidates):
+    """Return any current BIR object that can fully explain the Kufar listing.
+
+    First-filter identity intentionally ignores floor, address, house and unit
+    number. A listing is valid if one BIR object simultaneously has:
+      * the same room count;
+      * an exact area or an area that HALF_UP rounds to the Kufar tenth;
+      * the exact special fast-payment price.
+    """
+    if k.rooms is None or k.area is None or k.price_eur is None:
+        return None
+    for b in candidates:
+        if b.rooms is None or b.area is None or b.price_fast_eur is None:
+            continue
+        if k.rooms != b.rooms:
+            continue
+        if not area_close(k.area,b.area):
+            continue
+        if not price_matches(k.price_eur,b):
+            continue
+        return b
+    return None
 
 def _kufar_coords(k):
     rows=(k.raw or {}).get('ad_parameters')
@@ -141,8 +172,8 @@ def match_for_audit_field(k,candidates,field,preferred_object_key=None):
     prove which apartment is being advertised.
     """
     identity_fields={
-      'price':('area','rooms','floor'),
-      'area':('price','rooms','floor'),
+      'price':('area','rooms'),
+      'area':('price','rooms'),
     }.get(field)
     if not identity_fields:
         return MatchResult(None,'NONE',f'Unsupported independent audit field: {field}',{})
