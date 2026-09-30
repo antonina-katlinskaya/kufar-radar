@@ -6,7 +6,7 @@ import sqlite3
 def bir(**kwargs):
     values=dict(
       object_key='bir-1',building_name='11.2',official_address='Игоря Лученка, 22',
-      unit_no='8.43',price_regular_eur=47000,price_fast_eur=None,
+      unit_no='8.43',price_regular_eur=50000,price_fast_eur=47000,
       area=31.1,rooms=1,floor=8,raw={}
     )
     values.update(kwargs)
@@ -194,3 +194,23 @@ def test_audit_session_loads_trusted_passport_and_two_latest_versions():
     assert item.preferred['ad-1']=='bir-1'
     assert item.passport_confidence['ad-1']=='HIGH'
     assert [row['id'] for row in item.recent_versions['ad-1']]==[3,2]
+
+
+def test_inventory_filter_ignores_floor_and_old_passport_when_valid_combo_exists():
+    wrong_passport=bir(
+      object_key='bir-605',unit_no='605',area=48.63,rooms=1,floor=9,
+      price_regular_eur=62976,price_fast_eur=56703
+    )
+    valid_other_floor=bir(
+      object_key='bir-131',unit_no='131',area=48.63,rooms=1,floor=3,
+      price_regular_eur=62733,price_fast_eur=56459
+    )
+    item=trust(session([wrong_passport,valid_other_floor]),object_key='bir-605')
+    listing=kufar(price_eur=56459,area=48.6,rooms=1,floor=9)
+
+    result=item.audit(listing)
+
+    assert result['status']=='OK'
+    assert result['confidence']=='INVENTORY'
+    assert result['object_key']=='bir-131'
+    assert result['mismatches']=={}
