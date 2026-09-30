@@ -78,9 +78,9 @@ def save_kufar(db,items,profile_id):
 
     for x in items:
         seen.add(x.ad_id)
-        f=fp([x.price_eur,x.price_byn,x.area,x.rooms,x.floor,x.address,x.title,_raw_list_time(x.raw)])
+        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,x.floor,x.address,x.title,_raw_list_time(x.raw)])
         old=cur.get(x.ad_id)
-        data_changed=(not old or old.get('fingerprint')!=f or not old.get('active'))
+        data_changed=(not old or not old.get('active') or kufar_change_relevant(old,x))
         if not data_changed:
             continue
 
