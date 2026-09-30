@@ -1,3 +1,4 @@
+import json
 from radar.models import KufarListing
 from radar.store import kufar_change_relevant, price_change_relevant
 
@@ -37,3 +38,39 @@ def test_exchange_rate_changes_are_ignored_when_original_currency_price_is_stabl
     assert not price_change_relevant(old,listing(price_eur=29900,price_byn=101000,raw=raw))
     changed_raw=dict(raw,calculator=[{'currency':'USD','price':'3600000'}])
     assert price_change_relevant(old,listing(raw=changed_raw))
+
+
+class RecordingDB:
+    def __init__(self, row):
+        self.row = row
+        self.writes = []
+
+    def query(self, sql, params):
+        return [self.row]
+
+    def batch(self, statements):
+        self.writes.extend(statements)
+
+
+def test_save_kufar_does_not_write_when_only_exchange_rate_changes():
+    from radar.store import save_kufar
+
+    raw = {'currency': 'EUR', 'calculator': [{'currency': 'EUR', 'price': '3000000'}],
+           'list_time': '2026-09-24T08:00:00Z'}
+    db = RecordingDB(old_row(ad_id='1', fingerprint='old-fx-dependent',
+                             raw_json=json.dumps(raw)))
+    save_kufar(db, [listing(price_eur=30000, price_byn=101000, raw=raw)], 'p')
+    assert db.writes == []
+
+
+def test_save_kufar_records_native_price_change():
+    from radar.store import save_kufar
+
+    raw = {'currency': 'EUR', 'calculator': [{'currency': 'EUR', 'price': '3000000'}],
+           'list_time': '2026-09-24T08:00:00Z'}
+    db = RecordingDB(old_row(ad_id='1', fingerprint='old-fx-dependent',
+                             raw_json=json.dumps(raw)))
+    changed = dict(raw, calculator=[{'currency': 'EUR', 'price': '3100000'}])
+    save_kufar(db, [listing(price_eur=31000, price_byn=104000, raw=changed)], 'p')
+    assert len(db.writes) == 2
+    assert any('kufar_versions' in sql for sql, _ in db.writes)
