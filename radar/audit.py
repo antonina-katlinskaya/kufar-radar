@@ -1,6 +1,7 @@
 import json
 from .matcher import (
-    apply_mismatch_policy,match_for_audit_field,match_new,mismatch_map,vector
+    apply_mismatch_policy,inventory_first_match,match_for_audit_field,match_new,
+    mismatch_map,vector
 )
 from .house_directory import resolved_bir_address
 from .store import fp, now, current_bir, inactive_bir
@@ -117,6 +118,19 @@ class AuditSession:
         return str(latest_at)>str(matched_at)
 
     def audit(self,k):
+        # Cheap authoritative first filter: if any current BIR object can explain
+        # rooms + area (exact or rounded to 0.1) + exact fast-payment price,
+        # the Kufar listing is valid. Floor/address/house/unit must not create
+        # a false violation in that case.
+        inventory_obj=inventory_first_match(k,self.candidates)
+        if inventory_obj:
+            return {
+              'status':'OK','ad_id':k.ad_id,'object_key':inventory_obj.object_key,
+              'confidence':'INVENTORY',
+              'reason':'Current BIR inventory matches rooms, area and fast-payment price',
+              'mismatches':{}
+            }
+
         r=match_new(k,self.candidates)
 
         preferred=self.preferred.get(k.ad_id)
