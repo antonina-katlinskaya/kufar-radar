@@ -79,15 +79,15 @@ HOUSE_NAMES={
   'sad-ermitazh':'Сад Эрмитаж', 'dom-sad-ermitazh':'Сад Эрмитаж',
 }
 
-FRESH_SCOPE_STATE='fresh_scope_v3_applied'
+FRESH_SCOPE_STATE='fresh_scope_v4_daily_relevant_only'
 PENDING_AUDITS_STATE='pending_audits_v1'
 STRICT_ADDRESS_RECHECK_STATE='strict_address_v3_recheck_done'
 STRICT_BACKFILL_CLEANUP_STATE='strict_address_v2_cleanup_done'
 STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 RELIABLE_VERSIONS_CUTOFF='2026-09-24T13:01:00+00:00'
 AUDIT_BATCH_LIMIT=200
-ACTIONABLE_FIELDS={'price','area'}
-SERVICE_FIELDS=('address','floor','rooms','existence','review')
+ACTIONABLE_FIELDS={'price','area','rooms'}
+SERVICE_FIELDS=('address','existence','review')
 
 PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
 
@@ -452,9 +452,15 @@ async def collect_kufar(db,profile):
     return items,changed,previous_active
 
 def listing_is_today(item,local_now=None):
+    """Kufar list_time dated today means a fresh listing or a listing raised today."""
     local_now=local_now or datetime.now(MINSK)
     dt=parse_any_ts((item.raw or {}).get('list_time'))
     return bool(dt and dt.astimezone(MINSK).date()==local_now.astimezone(MINSK).date())
+
+def today_start_utc(local_now=None):
+    local_now=local_now or datetime.now(MINSK)
+    midnight=datetime.combine(local_now.date(),datetime.min.time(),tzinfo=MINSK)
+    return midnight.astimezone(timezone.utc).isoformat()
 
 def choose_audit_targets(items,changed,previous_active,audit_today_on_baseline=False,local_now=None):
     total=len(items)
@@ -654,9 +660,9 @@ def summary_rows(db):
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
-           AND e.field_name IN ('price','area')
+           AND e.field_name IN ('price','area','rooms')
          ORDER BY e.occurred_at DESC''',
-      [settings.live_cutoff_utc]
+      [today_start_utc()]
     )
 
 def service_event_counts(db):
@@ -665,9 +671,9 @@ def service_event_counts(db):
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
-           AND e.field_name NOT IN ('price','area')
+           AND e.field_name NOT IN ('price','area','rooms')
          GROUP BY e.field_name ORDER BY e.field_name''',
-      [settings.live_cutoff_utc]
+      [today_start_utc()]
     )
     return {row['field_name']:int(row['n']) for row in rows}
 
@@ -682,7 +688,7 @@ def review_rows(db):
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
            AND e.field_name='review'
          ORDER BY e.occurred_at DESC''',
-      [settings.live_cutoff_utc]
+      [today_start_utc()]
     )
 
 def compact_review_summary(rows):
@@ -776,15 +782,15 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None,servi
     title='☀️ **УТРЕННЯЯ ПРОВЕРКА' if mode=='morning' else '🔎 **ПРОВЕРКА ОБЪЯВЛЕНИЙ'
     parts=[f"{title} — {now.strftime('%d.%m')}**",'']
     if not rows:
-        parts.append('✅ **Нарушений цены и площади не обнаружено**')
+        parts.append('✅ **Нарушений цены, площади и количества комнат не обнаружено**')
     else:
-        parts.append(f"⚠️ **Найдено нарушений цены и площади: {len(rows)}**")
+        parts.append(f"⚠️ **Найдено нарушений: {len(rows)}**")
         counts={}
         for r in rows:
             field=r.get('field_name')
             counts[field]=counts.get(field,0)+1
         parts.append('')
-        for field in ['price','area']:
+        for field in ['price','area','rooms']:
             if counts.get(field):
                 parts.append(f"{FIELD_ICONS.get(field,'⚠️')} {FIELD_LABELS.get(field,field)} — {counts[field]}")
         people={}
@@ -891,31 +897,40 @@ async def run():
     save_pending_audits(db,pending)
 
     targets=include_active_event_targets(all_items,targets,set(pending))
-    today_ids=set()
-    strict_recheck=db.get_state(STRICT_ADDRESS_RECHECK_STATE,'')!='1'
-    if force_chats or strict_recheck:
-        today_ids=reliable_today_version_ad_ids(db,datetime.now(MINSK))
-        enqueue_pending_audits(
-          pending,[item for item in all_items if item.ad_id in today_ids],
-          reason='manual_today' if force_chats else 'strict_address_recheck'
-        )
+
+    # Manual "check now" means: re-check only today's fresh/raised listings.
+    # Old untouched ads must never be dragged back into the day's audit.
+    today_ids={item.ad_id for item in all_items if listing_is_today(item,datetime.now(MINSK))}
+    if force_chats:
+        today_items=[item for item in all_items if item.ad_id in today_ids]
+        enqueue_pending_audits(pending,today_items,reason='manual_today_fresh_or_raised')
         save_pending_audits(db,pending)
         targets=include_active_event_targets(all_items,targets,today_ids)
+
+    scope_reset=db.get_state(FRESH_SCOPE_STATE,'')!='1'
     archived_legacy_events=archive_legacy_events_once(db)
+    if scope_reset:
+        # Old pending work belongs to the previous broad-scope policy.
+        pending.clear()
+        save_pending_audits(db,pending)
+        targets=[item for item in targets if item.ad_id in today_ids]
+
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
     rechecked_active_events=0
     if bir_changed:
+        # Re-evaluate only violations created today. Yesterday's untouched ads
+        # cannot resurface merely because the BIR inventory refreshed.
         active_rows=db.query(
           'SELECT DISTINCT ad_id FROM events WHERE active=1 AND occurred_at>=?',
-          [settings.live_cutoff_utc]
+          [today_start_utc()]
         )
         before=len(targets)
         targets=include_active_event_targets(
           all_items,targets,{row['ad_id'] for row in active_rows}
         )
         rechecked_active_events=len(targets)-before
-        enqueue_pending_audits(pending,targets[before:],reason='bir_update')
+        enqueue_pending_audits(pending,targets[before:],reason='bir_update_today_only')
         save_pending_audits(db,pending)
     if len(targets)>AUDIT_BATCH_LIMIT:
         targets=targets[:AUDIT_BATCH_LIMIT]
@@ -943,8 +958,6 @@ async def run():
             pending.pop(k.ad_id,None)
     statements=session.flush()
     save_pending_audits(db,pending)
-    if strict_recheck:
-        db.set_state(STRICT_ADDRESS_RECHECK_STATE,'1')
     active_by_field=active_event_counts(db)
     active_by_type=active_event_type_counts(db)
     actionable_new_count=sum(
