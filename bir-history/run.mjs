@@ -45,6 +45,9 @@ const db = {
           const sample = result.results?.find(row => row.present);
           console.log('D1 types', JSON.stringify({present: sample?.present, missing_checks: sample?.missing_checks,
             presentType: typeof sample?.present, missingType: typeof sample?.missing_checks}));
+          console.log('D1 state', JSON.stringify({total: result.results.length,
+            active: result.results.filter(row => row.present).length,
+            activeMissing: result.results.filter(row => row.present && row.missing_checks).length}));
         }
         return result;
       },
