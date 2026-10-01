@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '2,17,32,47 * * * *'
-  push:
-    branches: [repair/bir-history-free-runner]
-    paths:
-      - 'bir-history/**'
-      - '.github/workflows/bir-history.yml'
 
 permissions:
   contents: read
