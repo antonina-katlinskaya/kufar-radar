@@ -215,3 +215,14 @@ def test_inventory_filter_ignores_floor_and_old_passport_when_valid_combo_exists
     assert result['confidence']=='INVENTORY'
     assert result['object_key']=='bir-131'
     assert result['mismatches']=={}
+
+
+def test_duplicate_bir_units_with_same_area_create_probable_area_violation_not_review():
+    candidates=[
+      bir(object_key='bir-a',price_fast_eur=48620,price_regular_eur=54023,area=30.87,floor=4),
+      bir(object_key='bir-b',price_fast_eur=48620,price_regular_eur=54023,area=30.87,floor=13),
+    ]
+    result=session(candidates).audit(kufar(price_eur=48620,area=31.4,floor=13))
+    assert result['status']=='PROBABLE'
+    assert set(result['mismatches'])=={'area'}
+    assert result['mismatches']['area']==(31.4,30.87)
