@@ -1,9 +1,9 @@
 name: Radar
 
+# Time-based Radar cadence is owned by the lightweight Cloudflare trigger.
+# GitHub Actions remains callable manually and on relevant production pushes.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/20 * * * *'
   push:
     branches: [main]
     paths:
