@@ -877,7 +877,7 @@ async def run():
     bir_changed=await collect_bir(db,force=bool(force_chats))
     pending=load_pending_audits(db)
     cleaned_polluted_pending=cleanup_polluted_strict_backfill(db,pending)
-    profile_runs=[]; targets=[]; all_items=[]
+    profile_runs=[]; targets=[]; all_items=[]; current_selected_ids=set()
     for profile in KUFAR_PROFILES:
         items,changed,previous_active=await collect_kufar(db,profile)
         all_items.extend(items)
@@ -888,6 +888,7 @@ async def run():
         )
         enqueue_pending_audits(pending,selected)
         targets.extend(selected)
+        current_selected_ids.update(item.ad_id for item in selected)
         profile_runs.append({
           'id':profile['id'],'label':profile['label'],'items':len(items),
           'changed':len(changed),'previous_active':previous_active,
@@ -913,7 +914,8 @@ async def run():
         # Old pending work belongs to the previous broad-scope policy.
         pending.clear()
         save_pending_audits(db,pending)
-        targets=[item for item in targets if item.ad_id in today_ids]
+        allowed_ids=today_ids | current_selected_ids
+        targets=[item for item in targets if item.ad_id in allowed_ids]
 
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
