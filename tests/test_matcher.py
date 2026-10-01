@@ -108,23 +108,12 @@ def test_ambiguous_units_still_report_consensus_house_address_error():
     assert r.mismatches['address']==('Братская ул, 22, Минск','Игоря Лученка ул, 22, Минск')
     assert r.reference.object_key=='a'
 
-def test_floor_only_difference_is_suppressed_when_everything_else_matches():
+def test_floor_is_completely_ignored_by_matcher():
     item=b(floor=3)
-    listing=k(floor=4,area=30.4,address='Игоря Лученка ул, 22, Минск')
-    mismatches=mismatch_map(listing,item)
-    assert mismatches=={'floor':(4,3)}
-    assert apply_mismatch_policy(listing,item,mismatches)=={}
-
-def test_floor_difference_remains_when_any_other_field_differs():
-    item=b(floor=3)
-    listing=k(floor=4,rooms=2,area=30.4,address='Игоря Лученка ул, 22, Минск')
-    mismatches=mismatch_map(listing,item)
-    assert set(mismatches)=={'floor','rooms'}
-    assert apply_mismatch_policy(listing,item,mismatches)==mismatches
-
-def test_floor_difference_remains_without_concrete_bir_unit_number():
-    item=b(floor=3)
-    item.unit_no=None
-    listing=k(floor=4,area=30.4,address='Игоря Лученка ул, 22, Минск')
-    mismatches=mismatch_map(listing,item)
-    assert apply_mismatch_policy(listing,item,mismatches)==mismatches
+    listing=k(floor=14,area=30.4,address='Игоря Лученка ул, 22, Минск')
+    v=vector(listing,item)
+    assert v['floor'] is None
+    assert 'floor' not in mismatch_map(listing,item)
+    r=match_new(listing,[item])
+    assert r.obj is not None
+    assert 'floor' not in r.mismatches
