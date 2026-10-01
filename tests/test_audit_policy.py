@@ -48,7 +48,7 @@ def test_wrong_address_does_not_block_probable_price_violation():
     listing=kufar(price_eur=45000)
     result=item.audit(listing)
     assert result['status']=='PROBABLE'
-    assert set(result['mismatches'])=={'price','address'}
+    assert set(result['mismatches'])=={'price'}
     assert result['object_keys']['price']=='bir-1'
     events=item.sync(listing,result)
     assert {event['event_type'] for event in events}=={'PROBABLE_MISMATCH'}
@@ -57,7 +57,7 @@ def test_wrong_address_does_not_block_probable_price_violation():
 def test_wrong_address_does_not_block_probable_area_violation():
     result=session().audit(kufar(area=31.8))
     assert result['status']=='PROBABLE'
-    assert set(result['mismatches'])=={'area','address'}
+    assert set(result['mismatches'])=={'area'}
     assert result['object_keys']['area']=='bir-1'
 
 

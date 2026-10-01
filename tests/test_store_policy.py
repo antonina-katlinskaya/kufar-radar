@@ -24,11 +24,18 @@ def test_euro_conversion_noise_is_not_a_real_listing_change_when_byn_is_stable()
     assert not kufar_change_relevant(old_row(),listing(price_eur=30100))
 
 
-def test_source_price_or_publication_time_change_is_audited():
+def test_source_price_or_raise_time_change_is_audited():
     assert price_change_relevant(old_row(),listing(price_byn=100500))
     assert kufar_change_relevant(
         old_row(),listing(raw={'list_time':'2026-09-24T09:00:00Z'})
     )
+
+def test_only_price_area_rooms_or_raise_trigger_audit():
+    assert kufar_change_relevant(old_row(),listing(area=30.1))
+    assert kufar_change_relevant(old_row(),listing(rooms=2))
+    assert not kufar_change_relevant(old_row(),listing(floor=9))
+    assert not kufar_change_relevant(old_row(),listing(address='Другой адрес'))
+    assert not kufar_change_relevant(old_row(),listing(title='Другой заголовок'))
 
 
 def test_exchange_rate_changes_are_ignored_when_original_currency_price_is_stable():

@@ -58,13 +58,22 @@ def price_change_relevant(old,new):
         return str(old_eur)!=str(new_eur)
 
 def kufar_change_relevant(old,new):
+    """Return True only for changes that should trigger a fresh BIR audit.
+
+    Relevant triggers are:
+      * a newly seen or reappeared listing;
+      * price change;
+      * area change;
+      * room-count change;
+      * Kufar list_time change (used as the signal that an old ad was raised).
+
+    Floor, address and title changes are deliberately ignored.
+    """
     if not old or not old.get('active'):
         return True
-    structural=(
-      ('area',new.area),('rooms',new.rooms),('floor',new.floor),
-      ('address',new.address),('title',new.title),
-    )
-    if any(not _same(old.get(field),value) for field,value in structural):
+    if not _same(old.get('area'),new.area):
+        return True
+    if not _same(old.get('rooms'),new.rooms):
         return True
     if _raw_list_time(old.get('raw_json')) != _raw_list_time(new.raw):
         return True
@@ -78,7 +87,7 @@ def save_kufar(db,items,profile_id):
 
     for x in items:
         seen.add(x.ad_id)
-        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,x.floor,x.address,x.title,_raw_list_time(x.raw)])
+        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,_raw_list_time(x.raw)])
         old=cur.get(x.ad_id)
         data_changed=(not old or not old.get('active') or kufar_change_relevant(old,x))
         if not data_changed:
