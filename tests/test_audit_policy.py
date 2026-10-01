@@ -226,3 +226,37 @@ def test_duplicate_bir_units_with_same_area_create_probable_area_violation_not_r
     assert result['status']=='PROBABLE'
     assert set(result['mismatches'])=={'area'}
     assert result['mismatches']['area']==(31.4,30.87)
+
+
+def test_price_and_area_pointing_to_different_bir_units_is_strict_combination_violation():
+    candidates=[
+      bir(object_key='area-unit',price_fast_eur=43517,price_regular_eur=48353,area=27.63,floor=3),
+      bir(object_key='price-unit',price_fast_eur=48620,price_regular_eur=54023,area=30.87,floor=5),
+    ]
+    item=session(candidates)
+    listing=kufar(price_eur=48620,area=27.6,rooms=1,floor=5)
+    result=item.audit(listing)
+    assert result['status']=='MISMATCH'
+    assert result['object_key'] is None
+    assert set(result['mismatches'])=={'combination'}
+    assert result['mismatches']['combination'][0]=={
+      'price':48620,'area':27.6,'rooms':1
+    }
+    events=item.sync(listing,result)
+    assert len(events)==1
+    assert events[0]['field_name']=='combination'
+    assert events[0]['event_type']=='NEW_MISMATCH'
+
+
+def test_complete_strict_tuple_without_any_current_match_is_violation_not_insufficient():
+    listing=kufar(price_eur=41342,area=28.9,rooms=1)
+    result=session([bir(price_fast_eur=47000,area=31.1)]).audit(listing)
+    assert result['status']=='MISMATCH'
+    assert set(result['mismatches'])=={'combination'}
+
+
+def test_incomplete_strict_tuple_can_still_be_insufficient():
+    listing=kufar(price_eur=None,area=28.9,rooms=1)
+    result=session([bir(price_fast_eur=47000,area=31.1)]).audit(listing)
+    assert result['status'] in {'INSUFFICIENT','REVIEW'}
+    assert 'combination' not in result.get('mismatches',{})
