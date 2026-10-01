@@ -3,7 +3,10 @@ name: Bir history scan
 on:
   workflow_dispatch:
   schedule:
-    - cron: '2,17,32,47 * * * *'
+    - cron: '2 * * * *'
+    - cron: '17 * * * *'
+    - cron: '32 * * * *'
+    - cron: '47 * * * *'
 
 permissions:
   contents: read
