@@ -72,6 +72,7 @@ export async function scan(env) {
     if(parsed < active * 0.9) throw Error(`Suspicious drop: rows=${parsed}, active=${active}`);
     const seen=new Set();
     const writes=[];let appeared=0, changed=0, excludedNew=0;
+    const changeReasons={fields:0,html:0,returned:0,missing:0};
     const refresh=[];
     for(const r of rows) {
       if(excluded.has(r.id)) continue;
@@ -96,6 +97,10 @@ export async function scan(env) {
       const deltas=fields.filter(k=>String(before[k]??'')!==String(after[k]??''));
       const htmlChanged=before.raw_html!==r.raw_html;
       if(deltas.length || htmlChanged || !old.present || old.missing_checks) {
+        if(deltas.length) changeReasons.fields++;
+        if(htmlChanged) changeReasons.html++;
+        if(!old.present) changeReasons.returned++;
+        if(old.missing_checks) changeReasons.missing++;
         after.seen_utc=now;
         writes.push(db.prepare('UPDATE bir_objects SET house=?,listing_json=?,last_seen=?,present=1,missing_checks=0 WHERE id=?')
           .bind(r.house,JSON.stringify(after),now,r.id));
@@ -113,6 +118,7 @@ export async function scan(env) {
       if(misses===2 && old.present) writes.push(event(db,old.id,now,scanId,'disappeared_from_listing'));
     }
     await batches(db,writes);
+    console.log('Change reasons',JSON.stringify(changeReasons));
     // Refresh changed cards first, then the stalest details. All fields remain in detail_json.
     const refreshIds=new Set(refresh.map(x=>x.id));
     const periodic=previous.filter(x=>seen.has(x.id)&&!refreshIds.has(x.id))
@@ -153,4 +159,3 @@ export default {
   },
   async scheduled(_event,env,ctx) {ctx.waitUntil(scan(env));}
 };
-
