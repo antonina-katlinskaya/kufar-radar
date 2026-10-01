@@ -138,7 +138,7 @@ def vector(k,b):
       'price': None if k.price_eur is None else price_matches(k.price_eur,b),
       'area': None if k.area is None or b.area is None else area_close(k.area,b.area),
       'rooms': None if k.rooms is None or b.rooms is None else k.rooms==b.rooms,
-      'floor': None if k.floor is None or b.floor is None else k.floor==b.floor,
+      'floor': None,
       'address': addr,
       'location': loc,
     }
@@ -149,7 +149,6 @@ def mismatch_map(k,b):
     if v['price'] is False: out['price']=(k.price_eur, {'fast':b.price_fast_eur,'regular':b.price_regular_eur})
     if v['area'] is False: out['area']=(k.area,b.area)
     if v['rooms'] is False: out['rooms']=(k.rooms,b.rooms)
-    if v['floor'] is False: out['floor']=(k.floor,b.floor)
     if v['address'] is False: out['address']=(k.address,resolved_bir_address(b) or b.building_name)
     return out
 
