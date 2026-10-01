@@ -89,6 +89,7 @@ STRICT_ADDRESS_RECHECK_STATE='strict_address_v3_recheck_done'
 STRICT_BACKFILL_CLEANUP_STATE='strict_address_v2_cleanup_done'
 STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 RELIABLE_VERSIONS_CUTOFF='2026-09-24T13:01:00+00:00'
+AUDIT_POLICY_RECHECK_STATE='strict_tuple_policy_v1_recheck_done'
 AUDIT_BATCH_LIMIT=200
 ACTIONABLE_FIELDS={'price','area','rooms','existence','combination'}
 SERVICE_FIELDS=('address','floor','review')
@@ -939,6 +940,25 @@ async def run():
 
     close_inactive_ad_events(db)
     rounded_area_events_closed=close_rounded_area_events(db)
+
+    # Policy migrations must re-evaluate existing active events even when the
+    # source snapshots themselves did not change. Mark the version only after
+    # the audit completes successfully so interrupted runs retry safely.
+    policy_recheck=db.get_state(AUDIT_POLICY_RECHECK_STATE,'')!='1'
+    policy_rechecked_active_events=0
+    if policy_recheck:
+        active_rows=db.query(
+          'SELECT DISTINCT ad_id FROM events WHERE active=1 AND occurred_at>=?',
+          [today_start_utc()]
+        )
+        before=len(targets)
+        targets=include_active_event_targets(
+          all_items,targets,{row['ad_id'] for row in active_rows}
+        )
+        policy_rechecked_active_events=len(targets)-before
+        enqueue_pending_audits(pending,targets[before:],reason='policy_recheck_strict_tuple_v1')
+        save_pending_audits(db,pending)
+
     rechecked_active_events=0
     if bir_changed:
         # Re-evaluate only violations created today. Yesterday's untouched ads
@@ -960,6 +980,7 @@ async def run():
       f"RADAR_INPUT bir_refreshed={bir_changed} profiles={profile_runs} targets={len(targets)} "
       f"archived_legacy_events={archived_legacy_events} "
       f"rounded_area_events_closed={rounded_area_events_closed} "
+      f"policy_rechecked_active_events={policy_rechecked_active_events} "
       f"rechecked_active_events={rechecked_active_events} "
       f"cleaned_polluted_pending={cleaned_polluted_pending} "
     )
@@ -980,6 +1001,8 @@ async def run():
             pending.pop(k.ad_id,None)
     statements=session.flush()
     save_pending_audits(db,pending)
+    if policy_recheck:
+        db.set_state(AUDIT_POLICY_RECHECK_STATE,'1')
     active_by_field=active_event_counts(db)
     active_by_type=active_event_type_counts(db)
     actionable_new_count=sum(
