@@ -55,9 +55,9 @@ def test_price_and_area_both_wrong_are_not_accused_without_independent_identity(
     assert match_for_audit_field(listing,[b()],'price').obj is None
     assert match_for_audit_field(listing,[b()],'area').obj is None
 
-def test_history_only_breaks_tie_between_independently_matching_objects():
+def test_history_only_breaks_tie_when_candidates_disagree_on_audited_value():
     listing=k(price_eur=42000,area=30.4,address='Братская ул, 1, Минск')
-    candidates=[b('a'),b('b')]
+    candidates=[b('a',price=43669),b('b',price=44000)]
     ambiguous=match_for_audit_field(listing,candidates,'price')
     selected=match_for_audit_field(listing,candidates,'price',preferred_object_key='b')
     assert ambiguous.obj is None and ambiguous.confidence=='AMBIGUOUS'
