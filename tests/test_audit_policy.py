@@ -61,14 +61,14 @@ def test_wrong_address_does_not_block_probable_area_violation():
     assert result['object_keys']['area']=='bir-1'
 
 
-def test_both_key_values_wrong_without_independent_identity_do_not_create_red_violation():
+def test_both_key_values_wrong_without_independent_identity_create_strict_tuple_violation():
     listing=kufar(
       price_eur=45000,area=31.8,
       raw={'ad_parameters':[{'p':'re_district','vl':'Минск-Мир'}]}
     )
     result=session().audit(listing)
-    assert result['status']=='INSUFFICIENT'
-    assert result['mismatches']=={}
+    assert result['status']=='MISMATCH'
+    assert set(result['mismatches'])=={'combination'}
 
 
 def test_trusted_passport_catches_price_and_area_even_with_wrong_address():
@@ -80,12 +80,12 @@ def test_trusted_passport_catches_price_and_area_even_with_wrong_address():
     assert result['object_keys']['area']=='bir-1'
 
 
-def test_weak_match_is_not_treated_as_object_passport():
+def test_weak_match_is_not_treated_as_object_passport_but_strict_tuple_still_applies():
     result=trust(session(),confidence='FIELD_HIGH').audit(
       kufar(price_eur=45000,area=31.8)
     )
-    assert result['status']=='INSUFFICIENT'
-    assert result['mismatches']=={}
+    assert result['status']=='MISMATCH'
+    assert set(result['mismatches'])=={'combination'}
 
 
 def test_valid_inventory_combo_wins_over_old_passport_after_core_changes():
