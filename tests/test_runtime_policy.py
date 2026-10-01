@@ -114,16 +114,21 @@ def test_five_same_kind_events_are_grouped_into_one_mass_notice():
     assert singles==[]
     assert len(mass)==1 and mass[0][0]=='address' and len(mass[0][2])==5
 
-def test_telegram_notifications_keep_price_area_and_rooms():
+def test_telegram_notifications_include_all_strict_filter_violations():
     listing=KufarListing(ad_id='1',url='x',profile_id='11077002')
     records=[
       ({'field_name':'address'},listing),
       ({'field_name':'floor'},listing),
+      ({'field_name':'review'},listing),
       ({'field_name':'price'},listing),
       ({'field_name':'area'},listing),
+      ({'field_name':'rooms'},listing),
+      ({'field_name':'existence'},listing),
+      ({'field_name':'combination'},listing),
     ]
-    records.append(({'field_name':'rooms'},listing))
-    assert [event['field_name'] for event,_ in actionable_event_records(records)]==['price','area','rooms']
+    assert [event['field_name'] for event,_ in actionable_event_records(records)]==[
+      'price','area','rooms','existence','combination'
+    ]
 
 class FakeTelegram:
     def __init__(self,updates=None):
@@ -280,3 +285,18 @@ def test_profile_labels_use_confirmed_kufar_ids():
     assert profile_label('11093294')=='Алёна Довгун'
     assert profile_label('11077002')=='Ирина Барашенко'
     assert profile_label('11080367')=='Хатковская'
+
+
+def test_strict_combination_summary_is_explicit():
+    row={
+      'field_name':'combination',
+      'new_value':json.dumps({'price':48620,'area':27.6,'rooms':1}),
+      'bir_value':'в текущем BIR нет одного объекта, где одновременно совпадают комнаты, площадь и спеццена',
+      'profile_id':'11077002','rooms':1,'area':27.6,'floor':5,
+      'address':'площадь Старый Аэропорт, Минск',
+      'occurred_at':'2026-10-01T20:00:00Z',
+    }
+    out=summary_line(row,'2026-10-01T20:00:00Z')
+    assert 'НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ' in out
+    assert '1 комн. · 27,60 м² · 48 620 €' in out
+    assert 'нет одного текущего объекта' in out

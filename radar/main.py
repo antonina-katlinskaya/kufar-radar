@@ -29,6 +29,7 @@ TITLES={
   'floor':'Расхождение по этажу между Kufar и BIR',
   'address':'Расхождение по адресу между Kufar и BIR',
   'existence':'Объявление на Kufar не соответствует наличию на BIR',
+  'combination':'На BIR нет объекта с такой комбинацией параметров',
   'review':'Нужна ручная проверка сопоставления',
 }
 
@@ -39,6 +40,7 @@ CARD_TITLES={
   'floor':'НЕ СОВПАДАЕТ ЭТАЖ',
   'address':'НЕ СОВПАДАЕТ АДРЕС',
   'existence':'ОБЪЕКТА НЕТ НА BIR',
+  'combination':'НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ',
   'review':'НУЖНА РУЧНАЯ ПРОВЕРКА',
 }
 
@@ -49,6 +51,7 @@ FIELD_LABELS={
   'floor':'Этаж',
   'address':'Адрес',
   'existence':'Нет на BIR',
+  'combination':'Нет полной тройки',
   'review':'Нужна проверка',
 }
 
@@ -59,6 +62,7 @@ FIELD_ICONS={
   'floor':'🏢',
   'address':'📍',
   'existence':'❌',
+  'combination':'🔴',
   'review':'🟡',
 }
 
@@ -86,8 +90,8 @@ STRICT_BACKFILL_CLEANUP_STATE='strict_address_v2_cleanup_done'
 STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 RELIABLE_VERSIONS_CUTOFF='2026-09-24T13:01:00+00:00'
 AUDIT_BATCH_LIMIT=200
-ACTIONABLE_FIELDS={'price','area','rooms'}
-SERVICE_FIELDS=('address','existence','review')
+ACTIONABLE_FIELDS={'price','area','rooms','existence','combination'}
+SERVICE_FIELDS=('address','floor','review')
 
 PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
 
@@ -290,6 +294,16 @@ def comparison_lines(row,include_label=False):
         parts += [f"**Kufar: {row.get('new_value') or '—'}**",f"**BIR: {row.get('bir_value') or '—'}**"]
     elif field=='existence':
         parts += ["**Kufar: объявление активно**","**BIR: объект не найден**"]
+    elif field=='combination':
+        try: combo=json.loads(row.get('new_value') or '{}')
+        except: combo={}
+        price=fmt_eur(combo.get('price')) if isinstance(combo,dict) else '—'
+        area=(fmt_area(combo.get('area'))+' м²') if isinstance(combo,dict) and combo.get('area') is not None else '—'
+        rooms=(fmt_rooms(combo.get('rooms'))+' комн.') if isinstance(combo,dict) and combo.get('rooms') is not None else '—'
+        parts += [
+          f"**Kufar: {rooms} · {area} · {price}**",
+          "**BIR: нет одного текущего объекта с одновременным совпадением всех трёх параметров**",
+        ]
     elif field=='review':
         parts += ["**Автоматически сопоставить квартиру не удалось**",f"Причина: {row.get('bir_value') or 'недостаточно данных'}"]
     return parts
@@ -333,7 +347,7 @@ def fmt_event_group(db,events,k):
       k.rooms,k.area,k.floor,omit_fields=set(fields)
     )
 
-    for field in ['price','area','rooms','floor','address','existence','review']:
+    for field in ['price','area','rooms','combination','existence','floor','address','review']:
         e=fields.get(field)
         if not e: continue
         parts.append('')
@@ -365,6 +379,12 @@ def compact_comparison(row):
     if field=='floor': return f"{fmt_rooms(row.get('new_value'))} → {fmt_rooms(row.get('bir_value'))} этаж"
     if field=='address': return f"{row.get('new_value') or '—'} → {row.get('bir_value') or '—'}"
     if field=='existence': return 'активно → объекта нет на BIR'
+    if field=='combination':
+        try: combo=json.loads(row.get('new_value') or '{}')
+        except: combo={}
+        if isinstance(combo,dict):
+            return f"{fmt_rooms(combo.get('rooms'))} комн. · {fmt_area(combo.get('area'))} м² · {fmt_eur(combo.get('price'))} → полной тройки на BIR нет"
+        return 'полной тройки на BIR нет'
     return str(row.get('bir_value') or 'нужна проверка')
 
 def fmt_mass_event_group(field,profile_id,records):
@@ -660,7 +680,7 @@ def summary_rows(db):
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
-           AND e.field_name IN ('price','area','rooms')
+           AND e.field_name IN ('price','area','rooms','existence','combination')
          ORDER BY e.occurred_at DESC''',
       [today_start_utc()]
     )
@@ -671,7 +691,7 @@ def service_event_counts(db):
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
-           AND e.field_name NOT IN ('price','area','rooms')
+           AND e.field_name NOT IN ('price','area','rooms','existence','combination')
          GROUP BY e.field_name ORDER BY e.field_name''',
       [today_start_utc()]
     )

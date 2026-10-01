@@ -48,6 +48,24 @@ def listing_replaced(recent_versions):
     )
     return core_changes>=1 and title_changed and image_changed
 
+def strict_tuple_complete(k):
+    return k.price_eur is not None and k.area is not None and k.rooms is not None
+
+def strict_tuple_values(k):
+    return {'price':k.price_eur,'area':k.area,'rooms':k.rooms}
+
+def strict_tuple_violation(k,reason):
+    return {
+      'status':'MISMATCH','ad_id':k.ad_id,'object_key':None,'object_keys':{},
+      'confidence':'STRICT_INVENTORY','reason':reason,
+      'mismatches':{
+        'combination':(
+          strict_tuple_values(k),
+          'в текущем BIR нет одного объекта, где одновременно совпадают комнаты, площадь и спеццена'
+        )
+      }
+    }
+
 class AuditSession:
     def __init__(self, db, ad_ids=None):
         self.db=db
@@ -236,11 +254,13 @@ class AuditSession:
                         object_keys[field]=result.obj.object_key
                 reasons.append(result.reason)
         else:
-            # Different objects for price and area mean that the card cannot be
-            # identified safely enough for a red accusation.
-            mismatches['review']=(
-              'требуется проверка',
-              'цена и площадь указывают на разные помещения BIR'
+            # The authoritative first filter has already proved that no single
+            # current BIR object matches rooms + area + fast-payment price.
+            # Different objects explaining price and area separately are
+            # therefore a concrete combination violation, not an ambiguity.
+            mismatches['combination']=(
+              strict_tuple_values(k),
+              'в BIR цена и площадь относятся к разным помещениям; единого совпадения тройки нет'
             )
             reasons.append('Independent price and area matching selected different BIR objects')
 
@@ -260,13 +280,14 @@ class AuditSession:
             }
             status=(
               'REVIEW' if set(mismatches)=={'review'} else
+              'MISMATCH' if 'combination' in mismatches else
               'PROBABLE' if actionable-confirmed_by_general_match else
               'MISMATCH'
             )
             return {
               'status':status,
               'ad_id':k.ad_id,
-              'object_key':matched_obj.object_key if matched_obj else None,
+              'object_key':None if 'combination' in mismatches else (matched_obj.object_key if matched_obj else None),
               'object_keys':object_keys,
               'confidence':r.confidence,
               'reason':'; '.join(reasons) or r.reason,
@@ -293,6 +314,10 @@ class AuditSession:
             return {'status':'OUT_OF_SCOPE','ad_id':k.ad_id,'reason':'No Minsk World marker and no Bir match','mismatches':{}}
 
         if r.confidence=='AMBIGUOUS':
+            if strict_tuple_complete(k):
+                return strict_tuple_violation(
+                  k,'Several current BIR candidates are individually plausible, but none matches the full strict tuple'
+                )
             return {
               'status':'REVIEW','ad_id':k.ad_id,
               'object_key':r.reference.object_key if r.reference else None,
@@ -302,13 +327,16 @@ class AuditSession:
 
         historical=match_new(k,self.inactive_candidates)
         if historical.confidence=='AMBIGUOUS':
+            if strict_tuple_complete(k):
+                return strict_tuple_violation(
+                  k,'No current BIR object matches the full strict tuple; historical candidates are ambiguous'
+                )
             return {
               'status':'REVIEW','ad_id':k.ad_id,'reason':'Historical Bir match is ambiguous',
               'mismatches':{'review':('требуется проверка','несколько архивных помещений BIR')}
             }
 
-        known=sum(v is not None and v!='' for v in [k.price_eur,k.area,k.rooms,k.floor,k.address])
-        if known>=4 and historical.obj and historical.confidence in {'EXACT','HIGH'}:
+        if strict_tuple_complete(k) and historical.obj and historical.confidence in {'EXACT','HIGH'}:
             return {
               'status':'NO_BIR_OBJECT',
               'ad_id':k.ad_id,
@@ -316,6 +344,11 @@ class AuditSession:
               'reason':historical.reason,
               'mismatches':{'existence':('active Kufar','no matching current Bir object')}
             }
+
+        if strict_tuple_complete(k):
+            return strict_tuple_violation(
+              k,'No current BIR object matches rooms + rounded/exact area + fast-payment price'
+            )
 
         return {'status':'INSUFFICIENT','ad_id':k.ad_id,'reason':'No confident current or historical Bir match','mismatches':{}}
 
@@ -328,7 +361,8 @@ class AuditSession:
             mismatch_type='PROBABLE_MISMATCH' if status=='PROBABLE' else 'NEW_MISMATCH'
             for field,(a,b) in mism.items():
                 desired[field]=(
-                  str(a),json.dumps(b,ensure_ascii=False) if isinstance(b,(dict,list)) else str(b),
+                  json.dumps(a,ensure_ascii=False) if isinstance(a,(dict,list)) else str(a),
+                  json.dumps(b,ensure_ascii=False) if isinstance(b,(dict,list)) else str(b),
                   mismatch_type
                 )
         elif status=='REVIEW':
