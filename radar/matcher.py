@@ -190,6 +190,27 @@ def match_for_audit_field(k,candidates,field,preferred_object_key=None):
           f'No BIR object matches all independent fields for {field}: {", ".join(identity_fields)}',{}
         )
 
+    if len(strong)>1:
+        # Floor/address/house/unit are not identity keys for the first filter.
+        # If every independently matching BIR candidate has the same value for
+        # the field under audit, the ambiguity is irrelevant: they all imply
+        # the same conclusion. Use one representative object only for display.
+        audited_values=[]
+        for b,_v in strong:
+            raw_value=b.price_fast_eur if field=='price' else b.area
+            try:
+                audited_values.append(Decimal(str(raw_value)) if raw_value is not None else None)
+            except (InvalidOperation, ValueError, TypeError):
+                audited_values.append(None)
+        if audited_values and None not in audited_values and len(set(audited_values))==1:
+            preferred=[row for row in strong if row[0].object_key==preferred_object_key]
+            b,v=(preferred[0] if len(preferred)==1 else sorted(strong,key=lambda row:row[0].object_key)[0])
+            return MatchResult(
+              b,'FIELD_CONSENSUS',
+              f'{len(strong)} BIR candidates match independent fields for {field} and agree on the audited value',
+              mismatch_map(k,b)
+            )
+
     if len(strong)>1 and preferred_object_key:
         preferred=[row for row in strong if row[0].object_key==preferred_object_key]
         if len(preferred)==1:
