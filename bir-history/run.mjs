@@ -46,5 +46,24 @@ const db = {
   async batch(prepared) { return query(prepared.map(({statement}) => statement)); }
 };
 
+const freshMinutes = Number(process.env.BIR_SKIP_IF_FRESH_MINUTES || 0);
+if (Number.isFinite(freshMinutes) && freshMinutes > 0) {
+  const latest = (await db.prepare(
+    "SELECT checked_at FROM bir_scans WHERE status='ok' ORDER BY checked_at DESC LIMIT 1"
+  ).all()).results?.[0];
+  const checkedAt = latest?.checked_at ? Date.parse(latest.checked_at) : NaN;
+  const ageMs = Date.now() - checkedAt;
+  if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= freshMinutes * 60_000) {
+    console.log(JSON.stringify({
+      ok:true,
+      skipped:true,
+      reason:'fresh_snapshot',
+      checked_at:latest.checked_at,
+      age_seconds:Math.round(ageMs / 1000)
+    }));
+    process.exit(0);
+  }
+}
+
 const result = await scan({BIR_DB: db});
 console.log(JSON.stringify(result));
