@@ -29,7 +29,8 @@ async function query(statements) {
     if (!globalThis.batchExplained) {
       globalThis.batchExplained = true;
       console.log('D1 first batch', JSON.stringify({sql: statements[0]?.sql,
-        params: statements[0]?.params?.map(v => typeof v), response: body.result[0]}));
+        params: statements[0]?.params?.map(v => typeof v), id: statements[0]?.params?.at(-1),
+        response: body.result[0]}));
     }
     console.log('D1 batch', JSON.stringify({statements: statements.length,
       rowsWritten: body.result.reduce((sum, result) => sum + Number(result.meta?.rows_written ?? 0), 0)}));
