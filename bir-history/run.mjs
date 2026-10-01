@@ -25,6 +25,10 @@ async function query(statements) {
       body.result.some(result => result.success === false)) {
     throw Error(`D1 query failed: ${JSON.stringify(body.errors ?? body.result?.map(r => r.error ?? null))}`);
   }
+  if (statements.length > 1) {
+    console.log('D1 batch', JSON.stringify({statements: statements.length,
+      rowsWritten: body.result.reduce((sum, result) => sum + Number(result.meta?.rows_written ?? 0), 0)}));
+  }
   return body.result;
 }
 
