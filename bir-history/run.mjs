@@ -39,7 +39,15 @@ const db = {
           statement
         };
       },
-      async all() { return (await query([{sql, params: []}]))[0]; },
+      async all() {
+        const result = (await query([{sql, params: []}]))[0];
+        if (sql === 'SELECT * FROM bir_objects') {
+          const sample = result.results?.find(row => row.present);
+          console.log('D1 types', JSON.stringify({present: sample?.present, missing_checks: sample?.missing_checks,
+            presentType: typeof sample?.present, missingType: typeof sample?.missing_checks}));
+        }
+        return result;
+      },
       async run() { return (await query([{sql, params: []}]))[0]; }
     };
   },
