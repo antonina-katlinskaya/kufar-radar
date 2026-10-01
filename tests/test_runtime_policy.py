@@ -260,7 +260,7 @@ def test_summary_shows_kufar_and_detection_times():
 def test_morning_overview_is_short_and_scannable():
     rows=[
       {'field_name':'area','profile_id':'11093294'},
-      {'field_name':'floor','profile_id':'11077002'},
+      {'field_name':'address','profile_id':'11077002'},
     ]
     out=summary_overview(
       rows,'2026-09-22T05:02:00Z',mode='morning',
@@ -271,7 +271,7 @@ def test_morning_overview_is_short_and_scannable():
     assert '📐 Площадь — 1' in out
     assert '👤 Алёна Довгун — 1' in out
     assert 'ℹ️ **Служебные сигналы — 1**' in out
-    assert 'этаж 1' in out
+    assert 'адрес 1' in out
     assert 'Ирина Барашенко' not in out
     assert 'Проверка завершена в 08:02' in out
     assert 'Управление радаром' not in out
