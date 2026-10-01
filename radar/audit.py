@@ -36,7 +36,7 @@ def listing_replaced(recent_versions):
     latest,previous=recent_versions[0],recent_versions[1]
     core_changes=sum(
       not _same_value(latest.get(field),previous.get(field))
-      for field in ('area','rooms','floor')
+      for field in ('area','rooms')
     )
     if core_changes>=2:
         return True
