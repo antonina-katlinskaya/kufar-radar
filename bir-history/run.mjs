@@ -1,11 +1,11 @@
 import {scan} from './worker.mjs';
 
-const {CF_ACCOUNT_ID, CF_D1_DATABASE_ID, CF_D1_API_TOKEN} = process.env;
-if (!CF_ACCOUNT_ID || !CF_D1_DATABASE_ID || !CF_D1_API_TOKEN) {
-  throw Error('Missing CF_ACCOUNT_ID, CF_D1_DATABASE_ID or CF_D1_API_TOKEN');
+const {CF_ACCOUNT_ID, BIR_D1_DATABASE_ID, CF_D1_API_TOKEN} = process.env;
+if (!CF_ACCOUNT_ID || !BIR_D1_DATABASE_ID || !CF_D1_API_TOKEN) {
+  throw Error('Missing CF_ACCOUNT_ID, BIR_D1_DATABASE_ID or CF_D1_API_TOKEN');
 }
 
-const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT_ID)}/d1/database/${encodeURIComponent(CF_D1_DATABASE_ID)}/query`;
+const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT_ID)}/d1/database/${encodeURIComponent(BIR_D1_DATABASE_ID)}/query`;
 
 async function query(statements) {
   const payload = statements.length === 1
