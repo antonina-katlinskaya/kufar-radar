@@ -114,7 +114,7 @@ def test_five_same_kind_events_are_grouped_into_one_mass_notice():
     assert singles==[]
     assert len(mass)==1 and mass[0][0]=='address' and len(mass[0][2])==5
 
-def test_telegram_notifications_keep_only_price_and_area():
+def test_telegram_notifications_keep_price_area_and_rooms():
     listing=KufarListing(ad_id='1',url='x',profile_id='11077002')
     records=[
       ({'field_name':'address'},listing),
@@ -122,7 +122,8 @@ def test_telegram_notifications_keep_only_price_and_area():
       ({'field_name':'price'},listing),
       ({'field_name':'area'},listing),
     ]
-    assert [event['field_name'] for event,_ in actionable_event_records(records)]==['price','area']
+    records.append(({'field_name':'rooms'},listing))
+    assert [event['field_name'] for event,_ in actionable_event_records(records)]==['price','area','rooms']
 
 class FakeTelegram:
     def __init__(self,updates=None):
@@ -266,7 +267,7 @@ def test_morning_overview_is_short_and_scannable():
       local_now=datetime(2026,9,22,8,2,tzinfo=MINSK)
     )
     assert '☀️ **УТРЕННЯЯ ПРОВЕРКА — 22.09**' in out
-    assert '⚠️ **Найдено нарушений цены и площади: 1**' in out
+    assert '⚠️ **Найдено нарушений: 1**' in out
     assert '📐 Площадь — 1' in out
     assert '👤 Алёна Довгун — 1' in out
     assert 'ℹ️ **Служебные сигналы — 1**' in out
