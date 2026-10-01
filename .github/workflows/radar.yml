@@ -49,6 +49,23 @@ jobs:
             fi
             sleep $((attempt * 10))
           done
+      - name: Refresh Kufar bridge before comparison
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          BIR_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          KUFAR_PRIORITY_PROFILES: '11093294,11077002,11080367'
+        run: |
+          for attempt in 1 2; do
+            if node cloudflare-bridge/run.mjs; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "Kufar bridge refresh failed after 2 attempts"
+              exit 1
+            fi
+            sleep 15
+          done
       - name: Run radar
         env:
           KUFAR_PROFILE_ID: '11093294'
