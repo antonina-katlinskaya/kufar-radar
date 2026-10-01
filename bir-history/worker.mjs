@@ -4,10 +4,36 @@ const RESIDENTIAL = new Set(['Апартаменты', 'Квартира', 'Пе
 const DETAIL_LIMIT = 24;
 const norm = s => String(s ?? '').replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
+const BIR_REQUEST_TIMEOUT_MS = 15000;
+const BIR_REQUEST_ATTEMPTS = 3;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 async function bir(path, params) {
-  const response = await fetch(BASE + path, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest','Referer':'https://bir.by/','User-Agent':'Mozilla/5.0'}, body:new URLSearchParams(params)});
-  if (!response.ok) throw Error(`Bir ${path}: HTTP ${response.status}`);
-  return response.text();
+  let lastError;
+  for (let attempt = 1; attempt <= BIR_REQUEST_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(BASE + path, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/x-www-form-urlencoded',
+          'X-Requested-With':'XMLHttpRequest',
+          'Referer':'https://bir.by/',
+          'User-Agent':'Mozilla/5.0'
+        },
+        body:new URLSearchParams(params),
+        signal:AbortSignal.timeout(BIR_REQUEST_TIMEOUT_MS)
+      });
+      if (response.ok) return response.text();
+      const error = Error(`Bir ${path}: HTTP ${response.status}`);
+      if (response.status < 500 && response.status !== 429) throw error;
+      lastError = error;
+    } catch (error) {
+      lastError = error;
+      if (attempt === BIR_REQUEST_ATTEMPTS) break;
+    }
+    await sleep(attempt * 1000);
+  }
+  throw lastError ?? Error(`Bir ${path}: request failed`);
 }
 
 export function parseRows(html) {
