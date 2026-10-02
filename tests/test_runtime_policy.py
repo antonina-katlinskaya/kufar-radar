@@ -76,7 +76,7 @@ def test_persistent_keyboard_buttons_are_actions():
     assert bot_action(CURRENT_BUTTON)=='state'
     assert bot_action(CHECK_BUTTON)=='check'
     assert bot_action(AMBIGUOUS_BUTTON)=='review'
-    assert MAIN_KEYBOARD==[[CURRENT_BUTTON],[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
+    assert MAIN_KEYBOARD==[[CURRENT_BUTTON]]
     assert bot_action('/check')=='check'
     assert bot_action('/violations')=='state'
     assert bot_action('/invite')=='invite'
