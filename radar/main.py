@@ -12,11 +12,12 @@ from .audit import AuditSession
 from .matcher import area_close
 
 MINSK=ZoneInfo('Europe/Minsk')
+CURRENT_BUTTON='📋 Актуальные нарушения'
 CHECK_BUTTON='🔄 Проверить сейчас'
 AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
-MAIN_KEYBOARD=[[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
-# Versioned state deliberately forces a one-time owner-only keyboard restore.
-KEYBOARD_STATE='telegram_main_keyboard_v7_two_buttons_owner_sent'
+MAIN_KEYBOARD=[[CURRENT_BUTTON],[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
+# Versioned state deliberately forces a one-time keyboard refresh for all subscribers.
+KEYBOARD_STATE='telegram_main_keyboard_v8_shared_current_state_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
@@ -167,7 +168,7 @@ def bot_action(text):
     if value.startswith('/start'): return 'start'
     if value.startswith('/check') or value==CHECK_BUTTON: return 'check'
     if value.startswith('/review') or value==AMBIGUOUS_BUTTON: return 'review'
-    if value.startswith('/state') or value.startswith('/violations') or value=='📋 Показать расхождения': return 'state'
+    if value.startswith('/state') or value.startswith('/violations') or value in {CURRENT_BUTTON,'📋 Показать расхождения'}: return 'state'
     return None
 
 def start_payload(text):
@@ -185,13 +186,8 @@ def subscribed_chat_ids(db):
     return list(dict.fromkeys(values))
 
 def automatic_chat_ids(db):
-    """Automatic summaries and alerts go only to the bot owner.
-
-    Other invited subscribers keep access to the persistent button and receive
-    a report only when they request it themselves.
-    """
-    owner=db.get_state('telegram_chat_id')
-    return [str(owner)] if owner else []
+    """Live violation alerts go to every explicitly connected subscriber."""
+    return subscribed_chat_ids(db)
 
 def add_subscriber(db,chat_id):
     chat_id=str(chat_id)
@@ -219,8 +215,9 @@ def send_invite(db,tg,owner_chat):
     tg.send(
       owner_chat,
       '👭 Ссылка для подключения сестры\n\n'
-      'Перешлите ей эту ссылку. Она нажмёт «Старт» и получит кнопку '
-      '«🔄 Проверить сейчас». Автоматические уведомления будут приходить только владельцу бота.\n\n'
+      'Перешлите ей эту ссылку. Она нажмёт «Старт» и получит кнопки '
+      '«📋 Актуальные нарушения» и «🔄 Проверить сейчас». '
+      'После подключения автоматические уведомления о новых нарушениях будут приходить и ей.\n\n'
       f'{url}\n\nСсылка одноразовая: посторонний человек подключиться по ней не сможет после её использования.'
     )
     return url
@@ -633,8 +630,8 @@ def process_updates(db,tg):
                     joined_chats.add(cid)
                     tg.send(
                       cid,
-                      'Радар подключён. Автоматические уведомления получает владелец бота. '
-                      'Вы можете получить актуальную сводку кнопкой ниже.',
+                      'Радар подключён. Новые нарушения будут приходить автоматически. '
+                      'Кнопка «📋 Актуальные нарушения» показывает все незакрытые случаи.',
                       reply_keyboard=MAIN_KEYBOARD
                     )
                 elif action=='start':
@@ -642,13 +639,11 @@ def process_updates(db,tg):
                 continue
 
             if action=='start':
-                is_owner=cid==str(owner)
                 tg.send(
                   cid,
-                  ('Радар подключён. Новые и изменённые объявления проверяются автоматически. '
-                   'Кнопка проверки закреплена внизу чата.') if is_owner else
-                  ('Радар подключён. Автоматические уведомления получает владелец бота. '
-                   'Вы можете получить актуальную сводку кнопкой ниже.'),
+                  'Радар подключён. Новые нарушения будут приходить автоматически. '
+                  'Кнопка «📋 Актуальные нарушения» показывает все незакрытые случаи, '
+                  'включая нарушения из предыдущих дней.',
                   reply_keyboard=MAIN_KEYBOARD
                 )
                 db.set_state(KEYBOARD_STATE,'1')
@@ -672,6 +667,7 @@ def process_updates(db,tg):
     return force_chats,show_chats,review_chats,joined_chats
 
 def summary_rows(db):
+    """All currently unresolved actionable violations, not only today's."""
     return db.query(
       '''SELECT e.*, k.profile_id, k.url, k.address, k.area, k.rooms, k.floor,
                 k.raw_json AS kufar_raw_json,
@@ -680,11 +676,57 @@ def summary_rows(db):
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
-         WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
+         WHERE e.active=1 AND k.active=1
            AND e.field_name IN ('price','area','rooms','existence','combination')
-         ORDER BY e.occurred_at DESC''',
-      [today_start_utc()]
+         ORDER BY e.occurred_at DESC'''
     )
+
+def current_violations_messages_html(rows):
+    """Compact mobile-friendly current-state list; split when Telegram gets long."""
+    if not rows:
+        return ['✅ <b>АКТУАЛЬНЫХ НАРУШЕНИЙ НЕТ</b>']
+
+    people={}
+    for row in rows:
+        pid=str(row.get('profile_id') or '')
+        people[pid]=people.get(pid,0)+1
+    people_line=' · '.join(
+      f"{html.escape(profile_label(pid))}: {count}"
+      for pid,count in people.items()
+    )
+
+    messages=[]
+    header=(
+      f"📋 <b>АКТУАЛЬНЫЕ НАРУШЕНИЯ — {len(rows)}</b>\n"
+      f"{people_line}\n\n"
+      "Показаны только незакрытые нарушения:"
+    )
+    current=header
+    for index,row in enumerate(rows,1):
+        field=row.get('field_name')
+        icon=FIELD_ICONS.get(field,'⚠️')
+        label=FIELD_LABELS.get(field,field)
+        when=fmt_short_dt_minsk(row.get('occurred_at')) or '—'
+        person=html.escape(profile_label(row.get('profile_id')))
+        comparison=html.escape(compact_comparison(row))
+        ad_id=html.escape(str(row.get('ad_id') or '—'))
+        url=str(row.get('url') or '')
+        link=(
+          f'<a href="{html.escape(url,quote=True)}">Kufar №{ad_id}</a>'
+          if url else f'Kufar №{ad_id}'
+        )
+        line=(
+          f"\n\n{index}. <b>{when}</b> · {person}\n"
+          f"{icon} {html.escape(str(label))}: {comparison}\n"
+          f"{link}"
+        )
+        if len(current)+len(line)>3800 and current!=header:
+            messages.append(current)
+            current=f"📋 <b>АКТУАЛЬНЫЕ НАРУШЕНИЯ — продолжение</b>{line}"
+        else:
+            current+=line
+    messages.append(current)
+    return messages
 
 def service_event_counts(db):
     rows=db.query(
@@ -842,18 +884,11 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None,servi
 
 def send_state_summary(db,tg,chat,keyboard=True,mode='status'):
     rows=summary_rows(db)
-    service_counts=service_event_counts(db)
-    bir_checked_at=db.get_state('last_bir_success')
-    tg.send(
-      chat,telegram_html(summary_overview(
-        rows,bir_checked_at,mode=mode,service_counts=service_counts
-      )),
-      parse_mode='HTML',reply_keyboard=MAIN_KEYBOARD if keyboard else None
-    )
-    for r in rows:
+    messages=current_violations_messages_html(rows)
+    for index,message in enumerate(messages):
         tg.send(
-          chat,telegram_html(summary_card(r,bir_checked_at)),
-          keyboard=summary_link_keyboard(r),parse_mode='HTML'
+          chat,message,parse_mode='HTML',
+          reply_keyboard=MAIN_KEYBOARD if keyboard and index==0 else None
         )
     if keyboard: db.set_state(KEYBOARD_STATE,'1')
 
@@ -874,12 +909,12 @@ def safe_send(tg,chat,text,**kwargs):
         return False
 
 def should_live_notify(local_now):
-    return 8 <= local_now.hour < 21
+    # There is no separate morning digest anymore, so new violations must not
+    # disappear merely because they were detected outside the old daytime window.
+    return True
 
 def should_send_morning_summary(db,local_now):
-    if not (8 <= local_now.hour < 9): return False
-    today=local_now.date().isoformat()
-    return db.get_state('morning_summary_date','') != today
+    return False
 
 async def run():
     db=D1(); tg=Telegram()
@@ -1021,16 +1056,8 @@ async def run():
     )
 
     local_now=datetime.now(MINSK)
-    morning=False
-    if auto_chats and should_send_morning_summary(db,local_now):
-        sent=False
-        for chat in auto_chats:
-            sent=safe_state_summary(db,tg,chat,keyboard=True,mode='morning') or sent
-        if sent:
-            db.set_state('morning_summary_date',local_now.date().isoformat())
-            morning=True
 
-    if auto_chats and should_live_notify(local_now) and not morning:
+    if auto_chats and should_live_notify(local_now):
         actionable_new=actionable_event_records(all_new)
         mass,single_records=split_mass_records(actionable_new)
         for field,profile_id,records in mass:
@@ -1061,13 +1088,13 @@ async def run():
         except Exception as exc:
             print(f'TELEGRAM_SEND_ERROR chat={chat} type={type(exc).__name__} detail={exc}')
 
-    if auto_chats and install_keyboard and not morning and not force_chats and not show_chats and not review_chats and not joined_chats:
+    if auto_chats and install_keyboard and not force_chats and not show_chats and not review_chats and not joined_chats:
         restored=False
         for chat in auto_chats:
             restored=safe_send(
               tg,chat,
-              '🔄 Кнопки «Проверить сейчас» и «Неоднозначные случаи» '
-              'закреплены внизу чата.',
+              '📋 Кнопка «Актуальные нарушения» показывает все незакрытые случаи. '
+              'Новые нарушения приходят автоматически.',
               reply_keyboard=MAIN_KEYBOARD
             ) or restored
         if restored:
