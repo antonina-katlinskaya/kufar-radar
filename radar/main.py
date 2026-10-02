@@ -15,9 +15,9 @@ MINSK=ZoneInfo('Europe/Minsk')
 CURRENT_BUTTON='📋 Актуальные нарушения'
 CHECK_BUTTON='🔄 Проверить сейчас'
 AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
-MAIN_KEYBOARD=[[CURRENT_BUTTON],[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
+MAIN_KEYBOARD=[[CURRENT_BUTTON]]
 # Versioned state deliberately forces a one-time keyboard refresh for all subscribers.
-KEYBOARD_STATE='telegram_main_keyboard_v8_shared_current_state_sent'
+KEYBOARD_STATE='telegram_main_keyboard_v9_current_only_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
