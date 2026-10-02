@@ -19,11 +19,11 @@ MINSK=ZoneInfo('Europe/Minsk')
 def t(hour,minute=0):
     return datetime(2026,9,21,hour,minute,tzinfo=MINSK)
 
-def test_notification_window_minsk():
-    assert not should_live_notify(t(7,59))
+def test_live_notifications_are_always_enabled_without_morning_digest():
+    assert should_live_notify(t(2,0))
     assert should_live_notify(t(8,0))
-    assert should_live_notify(t(20,59))
-    assert not should_live_notify(t(21,0))
+    assert should_live_notify(t(23,59))
+    assert not should_send_morning_summary(FakeDB(),t(8,0))
 
 def test_area_keeps_hundredths():
     assert fmt_area(30.4)=='30,40'
@@ -73,9 +73,10 @@ def test_bir_refresh_rechecks_only_ads_with_current_active_events():
     assert targets==[first,second]
 
 def test_persistent_keyboard_buttons_are_actions():
+    assert bot_action(CURRENT_BUTTON)=='state'
     assert bot_action(CHECK_BUTTON)=='check'
     assert bot_action(AMBIGUOUS_BUTTON)=='review'
-    assert MAIN_KEYBOARD==[[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
+    assert MAIN_KEYBOARD==[[CURRENT_BUTTON],[CHECK_BUTTON],[AMBIGUOUS_BUTTON]]
     assert bot_action('/check')=='check'
     assert bot_action('/violations')=='state'
     assert bot_action('/invite')=='invite'
@@ -151,13 +152,13 @@ def test_invite_adds_second_subscriber_once():
     assert db.state[INVITE_TOKEN_STATE]==''
     assert not consume_invite(db,'300','secret-link')
 
-def test_automatic_alerts_go_only_to_owner():
+def test_automatic_alerts_go_to_all_connected_subscribers():
     db=FakeDB({
       'telegram_chat_id':'100',
       SUBSCRIBERS_STATE:json.dumps(['100','200']),
     })
     assert subscribed_chat_ids(db)==['100','200']
-    assert automatic_chat_ids(db)==['100']
+    assert automatic_chat_ids(db)==['100','200']
 
 def test_sister_start_gets_keyboard_and_current_summary_request():
     db=FakeDB({'telegram_chat_id':'100',INVITE_TOKEN_STATE:'secret-link'})
@@ -169,7 +170,7 @@ def test_sister_start_gets_keyboard_and_current_summary_request():
     assert force==set() and show==set() and review==set() and joined=={'200'}
     assert subscribed_chat_ids(db)==['100','200']
     assert tg.sent[0][2]['reply_keyboard']==MAIN_KEYBOARD
-    assert 'Автоматические уведомления получает владелец' in tg.sent[0][1]
+    assert 'Новые нарушения будут приходить автоматически' in tg.sent[0][1]
 
 def test_manual_check_responds_to_requesting_subscriber():
     db=FakeDB({
