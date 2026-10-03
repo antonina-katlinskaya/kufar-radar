@@ -11,6 +11,7 @@ from radar.main import (
     split_mass_records, actionable_event_records, reliable_today_version_ad_ids,
     compact_review_summary, compact_review_summary_html, card_house_label,
     current_violations_messages_html, should_send_morning_summary,
+    cleanup_reappeared_false_alerts_once, REAPPEARED_FALSE_ALERT_CLEANUP_STATE,
 )
 from radar.models import KufarListing
 
@@ -89,6 +90,28 @@ class FakeDB:
         return self.state.get(key,default)
     def set_state(self,key,value):
         self.state[key]=value
+
+class CleanupDB(FakeDB):
+    def __init__(self,state=None,rows=None):
+        super().__init__(state)
+        self.rows=list(rows or [])
+        self.batches=[]
+    def query(self,sql,params=None):
+        return list(self.rows)
+    def batch(self,statements):
+        self.batches.append(statements)
+        for sql,params in statements:
+            if sql.startswith('INSERT INTO state'):
+                self.state[params[0]]=params[1]
+
+def test_cleanup_closes_only_proven_false_reappearance_events_once():
+    db=CleanupDB(rows=[{'id':3168},{'id':3169},{'id':3170}])
+    assert cleanup_reappeared_false_alerts_once(db)==3
+    statements=db.batches[0]
+    updates=[s for s in statements if s[0].startswith('UPDATE events')]
+    assert [params[1] for _,params in updates]==[3168,3169,3170]
+    assert db.state[REAPPEARED_FALSE_ALERT_CLEANUP_STATE]=='1'
+    assert cleanup_reappeared_false_alerts_once(db)==0
 
 def test_pending_queue_keeps_changed_ad_until_audit_finishes():
     item=KufarListing(ad_id='42',url='x',profile_id='11077002')
