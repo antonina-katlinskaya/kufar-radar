@@ -91,6 +91,7 @@ STRICT_BACKFILL_CLEANUP_STATE='strict_address_v2_cleanup_done'
 STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 RELIABLE_VERSIONS_CUTOFF='2026-09-24T13:01:00+00:00'
 AUDIT_POLICY_RECHECK_STATE='strict_tuple_policy_v1_recheck_done'
+REAPPEARED_FALSE_ALERT_CLEANUP_STATE='reappeared_false_alert_cleanup_v1'
 AUDIT_BATCH_LIMIT=200
 ACTIONABLE_FIELDS={'price','area','rooms','existence','combination'}
 SERVICE_FIELDS=('address','floor','review')
@@ -546,6 +547,35 @@ def cleanup_polluted_strict_backfill(db,pending):
     db.set_state(STRICT_BACKFILL_CLEANUP_STATE,'1')
     return len(polluted)
 
+def cleanup_reappeared_false_alerts_once(db):
+    """Close the three 03.10 alerts proven to come from snapshot disappearance/reappearance."""
+    if db.get_state(REAPPEARED_FALSE_ALERT_CLEANUP_STATE,'')=='1':
+        return 0
+    ad_ids=('1076366452','1076366808','1076366896')
+    placeholders=','.join('?' for _ in ad_ids)
+    rows=db.query(
+      f'''SELECT id FROM events
+          WHERE active=1
+            AND field_name='combination'
+            AND ad_id IN ({placeholders})
+            AND occurred_at>='2026-10-03T16:53:00+00:00'
+            AND occurred_at<'2026-10-03T16:54:30+00:00' ''',
+      list(ad_ids)
+    )
+    ids=[row['id'] for row in rows]
+    ts=datetime.now(timezone.utc).isoformat()
+    statements=[
+      ('UPDATE events SET active=0,resolved_at=? WHERE id=?',[ts,event_id])
+      for event_id in ids
+    ]
+    statements.append((
+      'INSERT INTO state(key,value,updated_at) VALUES(?,?,?) '
+      'ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',
+      [REAPPEARED_FALSE_ALERT_CLEANUP_STATE,'1',ts]
+    ))
+    db.batch(statements)
+    return len(ids)
+
 def archive_legacy_events_once(db):
     if db.get_state(FRESH_SCOPE_STATE,'')=='1': return 0
     rows=db.query('SELECT COUNT(*) AS n FROM events WHERE active=1')
@@ -966,6 +996,7 @@ async def run():
 
     scope_reset=db.get_state(FRESH_SCOPE_STATE,'')!='1'
     archived_legacy_events=archive_legacy_events_once(db)
+    cleaned_reappeared_false_alerts=cleanup_reappeared_false_alerts_once(db)
     if scope_reset:
         # Old pending work belongs to the previous broad-scope policy.
         pending.clear()
@@ -1014,6 +1045,7 @@ async def run():
     print(
       f"RADAR_INPUT bir_refreshed={bir_changed} profiles={profile_runs} targets={len(targets)} "
       f"archived_legacy_events={archived_legacy_events} "
+      f"cleaned_reappeared_false_alerts={cleaned_reappeared_false_alerts} "
       f"rounded_area_events_closed={rounded_area_events_closed} "
       f"policy_rechecked_active_events={policy_rechecked_active_events} "
       f"rechecked_active_events={rechecked_active_events} "
