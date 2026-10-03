@@ -70,6 +70,56 @@ def test_save_kufar_does_not_write_when_only_exchange_rate_changes():
     assert db.writes == []
 
 
+def test_reappeared_unchanged_ad_is_reactivated_without_audit():
+    from radar.store import save_kufar
+
+    raw = {'currency': 'EUR', 'calculator': [{'currency': 'EUR', 'price': '4248800'}],
+           'list_time': '2026-07-09T05:51:27Z'}
+    old = old_row(
+        ad_id='1076366452', active=0, price_eur=42488, price_byn=143864.37,
+        area=25.6, rooms=1, floor=5,
+        raw_json=json.dumps(raw), fingerprint='old'
+    )
+    db = RecordingDB(old)
+    changed = save_kufar(
+        db,
+        [listing(
+            ad_id='1076366452', price_eur=42488, price_byn=143864.37,
+            area=25.6, rooms=1, floor=5, raw=raw
+        )],
+        'p'
+    )
+    assert changed == []
+    assert len(db.writes) == 1
+    assert 'INSERT INTO kufar_ads' in db.writes[0][0]
+    assert all('kufar_versions' not in sql for sql, _ in db.writes)
+
+
+def test_reappeared_ad_with_real_price_change_is_audited():
+    from radar.store import save_kufar
+
+    old_raw = {'currency': 'EUR', 'calculator': [{'currency': 'EUR', 'price': '4248800'}],
+               'list_time': '2026-07-09T05:51:27Z'}
+    new_raw = {'currency': 'EUR', 'calculator': [{'currency': 'EUR', 'price': '4300000'}],
+               'list_time': '2026-07-09T05:51:27Z'}
+    old = old_row(
+        ad_id='1076366452', active=0, price_eur=42488, price_byn=143864.37,
+        area=25.6, rooms=1, floor=5,
+        raw_json=json.dumps(old_raw), fingerprint='old'
+    )
+    db = RecordingDB(old)
+    changed = save_kufar(
+        db,
+        [listing(
+            ad_id='1076366452', price_eur=43000, price_byn=145000,
+            area=25.6, rooms=1, floor=5, raw=new_raw
+        )],
+        'p'
+    )
+    assert [x.ad_id for x in changed] == ['1076366452']
+    assert any('kufar_versions' in sql for sql, _ in db.writes)
+
+
 def test_save_kufar_records_native_price_change():
     from radar.store import save_kufar
 

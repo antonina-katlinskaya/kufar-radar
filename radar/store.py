@@ -61,15 +61,17 @@ def kufar_change_relevant(old,new):
     """Return True only for changes that should trigger a fresh BIR audit.
 
     Relevant triggers are:
-      * a newly seen or reappeared listing;
+      * a genuinely new listing;
       * price change;
       * area change;
       * room-count change;
       * Kufar list_time change (used as the signal that an old ad was raised).
 
+    A previously known ad that merely disappears from one source snapshot and
+    later reappears with the same relevant values is reactivated silently.
     Floor, address and title changes are deliberately ignored.
     """
-    if not old or not old.get('active'):
+    if not old:
         return True
     if not _same(old.get('area'),new.area):
         return True
