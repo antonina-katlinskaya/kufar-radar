@@ -219,6 +219,18 @@ def test_ambiguous_button_opens_only_internal_review_list():
     force,show,review,joined=process_updates(db,tg)
     assert force==set() and show==set() and review=={'200'} and joined==set()
 
+def test_state_summary_does_not_consume_global_keyboard_refresh():
+    class StateSummaryDB(FakeDB):
+        def query(self,sql,params=None):
+            return []
+    db=StateSummaryDB()
+    tg=FakeTelegram()
+    from radar.main import send_state_summary, KEYBOARD_STATE
+    send_state_summary(db,tg,'100',keyboard=True)
+    assert KEYBOARD_STATE not in db.state
+    assert tg.sent[0][2]['reply_keyboard']==MAIN_KEYBOARD
+
+
 def test_ambiguous_cases_are_rendered_as_one_compact_list():
     rows=[{
       'profile_id':'11077002','building_name':'11.2','unit_no':'4.47',
