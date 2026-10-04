@@ -38,6 +38,69 @@ def test_only_price_area_rooms_or_raise_trigger_audit():
     assert not kufar_change_relevant(old_row(),listing(title='Другой заголовок'))
 
 
+def test_paid_promotion_activation_triggers_audit():
+    old=old_row(raw_json=json.dumps({
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{'highlight':False,'polepos':False,'halva':False,'ribbons':None},
+    }))
+    new=listing(raw={
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{'highlight':True,'polepos':False,'halva':False,'ribbons':None},
+    })
+    assert kufar_change_relevant(old,new)
+
+
+def test_paid_promotion_removal_triggers_audit():
+    old=old_row(raw_json=json.dumps({
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{'highlight':True,'polepos':False},
+    }))
+    new=listing(raw={
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{'highlight':False,'polepos':False},
+    })
+    assert kufar_change_relevant(old,new)
+
+
+def test_missing_paid_services_equals_all_services_off():
+    old=old_row(raw_json=json.dumps({
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+    }))
+    new=listing(raw={
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{'highlight':False,'polepos':False,'halva':False,'ribbons':None},
+    })
+    assert not kufar_change_relevant(old,new)
+
+
+def test_unknown_future_paid_service_also_triggers_audit():
+    old=old_row(raw_json=json.dumps({
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{},
+    }))
+    new=listing(raw={
+        'currency':'EUR',
+        'calculator':[{'currency':'EUR','price':'3000000'}],
+        'list_time':'2026-09-24T08:00:00Z',
+        'paid_services':{'x13':True},
+    })
+    assert kufar_change_relevant(old,new)
+
+
 def test_exchange_rate_changes_are_ignored_when_original_currency_price_is_stable():
     raw={'currency':'USD','calculator':[{'currency':'USD','price':'3500000'}],
          'list_time':'2026-09-24T08:00:00Z'}

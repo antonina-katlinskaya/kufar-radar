@@ -16,14 +16,43 @@ def _same(a,b):
     except (TypeError,ValueError):
         return str(a)==str(b)
 
-def _raw_list_time(raw):
+def _raw_dict(raw):
     if isinstance(raw,dict):
-        return raw.get('list_time')
+        return raw
     try:
         value=json.loads(raw or '{}')
-        return value.get('list_time') if isinstance(value,dict) else None
+        return value if isinstance(value,dict) else {}
     except (TypeError,ValueError):
-        return None
+        return {}
+
+def _raw_list_time(raw):
+    return _raw_dict(raw).get('list_time')
+
+def _paid_services(raw):
+    """Canonical active paid-promotion state from Kufar.
+
+    False/null/empty values are omitted so an older snapshot without a
+    paid_services block is equivalent to a current snapshot where every
+    promotion flag is off. Any active/meaningful field is retained, including
+    future Kufar promotion types we do not know about yet.
+    """
+    paid=_raw_dict(raw).get('paid_services')
+    if not isinstance(paid,dict):
+        return {}
+
+    def meaningful(value):
+        if value is None or value is False or value=='':
+            return None
+        if isinstance(value,dict):
+            cleaned={str(k):meaningful(v) for k,v in value.items()}
+            return {k:v for k,v in cleaned.items() if v is not None and v!=[] and v!={}}
+        if isinstance(value,list):
+            cleaned=[meaningful(v) for v in value]
+            return [v for v in cleaned if v is not None and v!=[] and v!={}]
+        return value
+
+    cleaned=meaningful(paid)
+    return cleaned if isinstance(cleaned,dict) else {}
 
 def _source_price(raw):
     if not isinstance(raw,dict):
@@ -65,7 +94,8 @@ def kufar_change_relevant(old,new):
       * price change;
       * area change;
       * room-count change;
-      * Kufar list_time change (used as the signal that an old ad was raised).
+      * Kufar list_time change (used as the signal that an old ad was raised);
+      * paid promotion state change (VIP/highlight/pole position/etc.).
 
     A previously known ad that merely disappears from one source snapshot and
     later reappears with the same relevant values is reactivated silently.
@@ -79,6 +109,8 @@ def kufar_change_relevant(old,new):
         return True
     if _raw_list_time(old.get('raw_json')) != _raw_list_time(new.raw):
         return True
+    if _paid_services(old.get('raw_json')) != _paid_services(new.raw):
+        return True
     return price_change_relevant(old,new)
 
 def save_kufar(db,items,profile_id):
@@ -89,7 +121,7 @@ def save_kufar(db,items,profile_id):
 
     for x in items:
         seen.add(x.ad_id)
-        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,_raw_list_time(x.raw)])
+        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,_raw_list_time(x.raw),_paid_services(x.raw)])
         old=cur.get(x.ad_id)
         data_changed=(not old or not old.get('active') or kufar_change_relevant(old,x))
         if not data_changed:
