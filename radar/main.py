@@ -17,7 +17,7 @@ CHECK_BUTTON='🔄 Проверить сейчас'
 AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
 MAIN_KEYBOARD=[[CURRENT_BUTTON]]
 # Versioned state deliberately forces a one-time keyboard refresh for all subscribers.
-KEYBOARD_STATE='telegram_main_keyboard_v9_current_only_sent'
+KEYBOARD_STATE='telegram_main_keyboard_v10_current_only_sent'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
@@ -920,7 +920,6 @@ def send_state_summary(db,tg,chat,keyboard=True,mode='status'):
           chat,message,parse_mode='HTML',
           reply_keyboard=MAIN_KEYBOARD if keyboard and index==0 else None
         )
-    if keyboard: db.set_state(KEYBOARD_STATE,'1')
 
 def safe_state_summary(db,tg,chat,keyboard=True,mode='status'):
     try:
