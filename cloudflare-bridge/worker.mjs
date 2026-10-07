@@ -74,6 +74,16 @@ async function scanProfile(env,profile) {
   await log('ok');return {profile,apiTotal:total,fetched:seen,mw,added,changed,nextPage:page};
  }catch(e){await log('rejected',String(e));throw e;}
 }
+async function marketAccounts(db, ads) {
+ const ids=[...new Set([...ads.values()].map(ad=>ad.account_id).filter(id=>id!=null))];
+ const accounts=new Map();
+ for(let i=0;i<ids.length;i+=100) {
+  const page=ids.slice(i,i+100);
+  const rows=(await db.prepare(`SELECT profile_id,account_id FROM kufar_profiles WHERE account_id IN (${page.map(()=>'?').join(',')})`).bind(...page).all()).results;
+  for(const row of rows) accounts.set(row.account_id,row.profile_id);
+ }
+ return accounts;
+}
 async function scanMarket(env) {
  const db=env.BIR_DB,now=new Date().toISOString(),scanId=crypto.randomUUID();let cursor=null,total=null,seen=0,mw=0,added=0,changed=0;
  try {
@@ -81,7 +91,7 @@ async function scanMarket(env) {
   const ads=new Map();for(let i=0;i<MARKET_PAGES;i++){const p=await fetchMarket(cursor);total=p.total;seen+=p.ads.length;for(const ad of p.ads)if(ad.company_ad&&claimed(ad))ads.set(String(ad.ad_id),ad);cursor=p.next;if(!cursor)break;}
   let deepCursor=state.cursor||cursor,deepPage=state.cursor?state.page_number:MARKET_PAGES+1;
   for(let i=0;i<MARKET_PAGES&&deepCursor;i++){const p=await fetchMarket(deepCursor);seen+=p.ads.length;for(const ad of p.ads)if(ad.company_ad&&claimed(ad))ads.set(String(ad.ad_id),ad);deepCursor=p.next;deepPage++;}
-  mw=ads.size;const accounts=new Map((await db.prepare('SELECT profile_id,account_id FROM kufar_profiles WHERE account_id IS NOT NULL').all()).results.map(x=>[x.account_id,x.profile_id]));
+  mw=ads.size;const accounts=await marketAccounts(db,ads);
   const ids=[...ads.keys()],prior=new Map();for(let i=0;i<ids.length;i+=100){const q=await db.prepare(`SELECT ad_id,price_eur,price_byn,area,rooms,floor,address,title FROM kufar_ads_live WHERE ad_id IN (${ids.slice(i,i+100).map(()=>'?').join(',')})`).bind(...ids.slice(i,i+100)).all();for(const x of q.results)prior.set(x.ad_id,x);}
   const writes=[],proposals=[],newProfiles=new Map();
   for(const ad of ads.values()){const account=ad.account_id,profile=accounts.get(account)||`account:${account}`,r=parsed(ad,profile),old=prior.get(r.id);if(!accounts.has(account))newProfiles.set(account,ad);
