@@ -7,6 +7,7 @@ from radar.main import (
     summary_line, summary_overview, summary_link_keyboard, telegram_html,
     bot_action, CURRENT_BUTTON, CHECK_BUTTON, AMBIGUOUS_BUTTON, MAIN_KEYBOARD, start_payload,
     subscribed_chat_ids, automatic_chat_ids, add_subscriber, consume_invite, process_updates,
+    ensure_control_panel, CONTROL_PANEL_STATE_PREFIX,
     SUBSCRIBERS_STATE, INVITE_TOKEN_STATE, profile_label,
     split_mass_records, actionable_event_records, reliable_today_version_ad_ids,
     compact_review_summary, compact_review_summary_html, card_house_label,
@@ -159,12 +160,48 @@ class FakeTelegram:
     def __init__(self,updates=None):
         self.updates=list(updates or [])
         self.sent=[]
+        self.pinned=[]
+        self.next_message_id=500
+        self.pin_results={}
     def get_updates(self,offset=None):
         return self.updates
     def send(self,chat_id,text,**kwargs):
         self.sent.append((str(chat_id),text,kwargs))
+        self.next_message_id+=1
+        return {'ok':True,'result':{'message_id':self.next_message_id}}
+    def pin(self,chat_id,message_id):
+        self.pinned.append((str(chat_id),int(message_id)))
+        return self.pin_results.get(int(message_id),True)
     def answer_callback(self,*args,**kwargs):
         pass
+
+def test_control_panel_is_created_pinned_and_saved_even_with_zero_violations():
+    db=FakeDB()
+    tg=FakeTelegram()
+    assert ensure_control_panel(db,tg,'100')
+    key=f'{CONTROL_PANEL_STATE_PREFIX}100'
+    assert db.state[key]=='501'
+    assert tg.pinned==[('100',501)]
+    assert tg.sent[0][2]['keyboard'][0][0]['callback_data']=='state_now'
+    assert 'даже если сейчас их 0' in tg.sent[0][1]
+
+def test_control_panel_is_reused_without_sending_another_message():
+    key=f'{CONTROL_PANEL_STATE_PREFIX}100'
+    db=FakeDB({key:'321'})
+    tg=FakeTelegram()
+    assert ensure_control_panel(db,tg,'100')
+    assert tg.pinned==[('100',321)]
+    assert tg.sent==[]
+
+def test_control_panel_recreates_itself_if_saved_message_disappeared():
+    key=f'{CONTROL_PANEL_STATE_PREFIX}100'
+    db=FakeDB({key:'321'})
+    tg=FakeTelegram()
+    tg.pin_results[321]=False
+    assert ensure_control_panel(db,tg,'100')
+    assert db.state[key]=='501'
+    assert tg.pinned==[('100',321),('100',501)]
+    assert len(tg.sent)==1
 
 def test_invite_adds_second_subscriber_once():
     db=FakeDB({'telegram_chat_id':'100',INVITE_TOKEN_STATE:'secret-link'})
