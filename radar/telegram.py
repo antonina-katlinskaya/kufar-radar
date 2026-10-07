@@ -29,6 +29,16 @@ class Telegram:
         with open(path,'rb') as f:
             r=httpx.post(self.base+'/sendPhoto',data={'chat_id':chat_id,'caption':caption[:1024]},files={'photo':f},timeout=60)
         r.raise_for_status(); return r.json()
+    def pin(self,chat_id,message_id):
+        try:
+            r=httpx.post(
+              self.base+'/pinChatMessage',
+              json={'chat_id':chat_id,'message_id':int(message_id),'disable_notification':True},
+              timeout=30
+            )
+            return bool(r.is_success and r.json().get('ok'))
+        except:
+            return False
     def answer_callback(self,cqid,text='Принято'):
         try: httpx.post(self.base+'/answerCallbackQuery',json={'callback_query_id':cqid,'text':text},timeout=15)
         except: pass
