@@ -8,7 +8,7 @@ from .d1 import D1
 from .telegram import Telegram
 from .store import save_kufar, save_bir, current_kufar
 from .source_snapshot import history_db, load_bir_snapshot, load_kufar_profile_snapshot
-from .audit import AuditSession
+from .audit import AuditSession, ignored_area_violation
 from .matcher import area_close
 
 MINSK=ZoneInfo('Europe/Minsk')
@@ -947,6 +947,11 @@ def should_send_morning_summary(db,local_now):
 
 async def run():
     db=D1(); tg=Telegram()
+    db.batch([('''UPDATE events SET active=0,resolved_at=?
+        WHERE active=1 AND field_name='area'
+          AND CAST(new_value AS REAL)=44 AND CAST(bir_value AS REAL)=44.11
+          AND ad_id IN (SELECT ad_id FROM kufar_ads WHERE profile_id='11080367')''',
+        [datetime.now(timezone.utc).isoformat()])])
     force_chats,show_chats,review_chats,joined_chats=process_updates(db,tg)
     auto_chats=automatic_chat_ids(db)
     owner=db.get_state('telegram_chat_id')

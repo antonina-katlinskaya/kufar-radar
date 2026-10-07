@@ -260,3 +260,29 @@ def test_incomplete_strict_tuple_can_still_be_insufficient():
     result=session([bir(price_fast_eur=47000,area=31.1)]).audit(listing)
     assert result['status'] in {'INSUFFICIENT','REVIEW'}
     assert 'combination' not in result.get('mismatches',{})
+
+def test_hatkovskaya_known_area_exception_survives_republication():
+    for ad_id in ('old-card', 'new-card'):
+        item=session()
+        listing=kufar(ad_id=ad_id,profile_id='11080367',area=44)
+        result={'status':'MISMATCH','mismatches':{'area':(44,44.11)}}
+        assert item.sync(listing,result)==[]
+
+def test_hatkovskaya_exception_keeps_other_fields_and_other_sellers():
+    item=session()
+    listing=kufar(profile_id='11080367',area=44)
+    result={'status':'MISMATCH','mismatches':{'area':(44,44.11),'price':(40000,47000)}}
+    assert [e['field_name'] for e in item.sync(listing,result)]==['price']
+    item=session()
+    listing=kufar(profile_id='11077002',area=44)
+    assert [e['field_name'] for e in item.sync(listing,{'status':'MISMATCH','mismatches':{'area':(44,44.11)}})]==['area']
+    item=session()
+    listing=kufar(profile_id='11080367',area=44)
+    assert [e['field_name'] for e in item.sync(listing,{'status':'MISMATCH','mismatches':{'area':(44,44.12)}})]==['area']
+
+def test_hatkovskaya_exception_closes_previous_active_area_event():
+    item=session()
+    listing=kufar(profile_id='11080367',area=44)
+    item.active={'ad-1':{'area':{'id':12}}}
+    assert item.sync(listing,{'status':'MISMATCH','mismatches':{'area':(44,44.11)}})==[]
+    assert any(sql.startswith('UPDATE events SET active=0') for sql,_ in item.statements)

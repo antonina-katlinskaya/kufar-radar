@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal, InvalidOperation
 from .matcher import (
     apply_mismatch_policy,inventory_first_match,match_for_audit_field,match_new,
     mismatch_map,vector
@@ -7,6 +8,16 @@ from .house_directory import resolved_bir_address
 from .store import fp, now, current_bir, inactive_bir
 from .collectors.kufar import is_mw_claimed
 from .config import settings
+
+def ignored_area_violation(profile_id, field, kufar_value, bir_value):
+    """Owner-requested exception: Hatkovskaya's recurring 44.00 -> 44.11 only."""
+    if str(profile_id) != '11080367' or field != 'area':
+        return False
+    try:
+        return (Decimal(str(kufar_value).replace(',', '.')) == Decimal('44')
+                and Decimal(str(bir_value).replace(',', '.')) == Decimal('44.11'))
+    except (InvalidOperation, ValueError, TypeError):
+        return False
 
 TRUSTED_PASSPORT_CONFIDENCE={'EXACT','HIGH'}
 
@@ -368,6 +379,9 @@ class AuditSession:
         elif status=='REVIEW':
             for field,(a,b) in mism.items():
                 desired[field]=(str(a),str(b),'NEEDS_REVIEW')
+
+        desired={field:value for field,value in desired.items()
+                 if not ignored_area_violation(k.profile_id,field,value[0],value[1])}
 
         active=self.active.get(k.ad_id,{})
         new_events=[]
