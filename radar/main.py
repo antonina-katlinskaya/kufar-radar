@@ -17,7 +17,8 @@ CHECK_BUTTON='🔄 Проверить сейчас'
 AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
 MAIN_KEYBOARD=[[CURRENT_BUTTON]]
 # Versioned state deliberately forces a one-time keyboard refresh for all subscribers.
-KEYBOARD_STATE='telegram_main_keyboard_v10_current_only_sent'
+KEYBOARD_STATE='telegram_main_keyboard_v11_pinned_fallback_sent'
+CONTROL_PANEL_STATE_PREFIX='telegram_control_panel_v1_'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
 INVITE_TOKEN_STATE='telegram_invite_token_v1'
 INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
@@ -197,6 +198,37 @@ def add_subscriber(db,chat_id):
         values.append(chat_id)
         db.set_state(SUBSCRIBERS_STATE,json.dumps(values,separators=(',',':')))
     return values
+
+def ensure_control_panel(db,tg,chat_id):
+    """Keep an always-available pinned fallback for the main radar action.
+
+    Telegram clients can hide a reply keyboard locally even when is_persistent=True.
+    The pinned inline button is therefore the durable control surface: every run
+    re-pins the stored panel, and recreates it automatically if the message was
+    deleted or can no longer be pinned.
+    """
+    chat_id=str(chat_id)
+    state_key=f'{CONTROL_PANEL_STATE_PREFIX}{chat_id}'
+    message_id=db.get_state(state_key,'')
+    if message_id and tg.pin(chat_id,message_id):
+        return True
+
+    try:
+        response=tg.send(
+          chat_id,
+          '📌 Панель радара\n\n'
+          'Кнопка ниже всегда показывает все незакрытые нарушения, '
+          'даже если сейчас их 0.',
+          keyboard=[[{'text':CURRENT_BUTTON,'callback_data':'state_now'}]]
+        )
+        message_id=((response or {}).get('result') or {}).get('message_id')
+        if not message_id:
+            return False
+        db.set_state(state_key,str(message_id))
+        return tg.pin(chat_id,message_id)
+    except Exception as exc:
+        print(f'TELEGRAM_CONTROL_PANEL_ERROR chat={chat_id} type={type(exc).__name__} detail={exc}')
+        return False
 
 def create_invite(db):
     token=secrets.token_urlsafe(24)
@@ -956,6 +988,11 @@ async def run():
     auto_chats=automatic_chat_ids(db)
     owner=db.get_state('telegram_chat_id')
     install_keyboard=bool(auto_chats and db.get_state(KEYBOARD_STATE,'')!='1')
+
+    # Telegram may hide a persistent reply keyboard client-side. Keep a second,
+    # pinned control panel alive independently of violation count or chat cleanup.
+    for chat in auto_chats:
+        ensure_control_panel(db,tg,chat)
 
     if owner and db.get_state(INVITE_NOTICE_STATE,'')!='1':
         try:
