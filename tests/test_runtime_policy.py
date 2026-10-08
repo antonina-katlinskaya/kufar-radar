@@ -374,3 +374,57 @@ def test_strict_combination_summary_is_explicit():
     assert 'НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ' in out
     assert '1 комн. · 27,60 м² · 48 620 €' in out
     assert 'нет одного текущего объекта' in out
+
+
+def test_backdated_material_change_is_marked_with_history_details():
+    from radar.main import backdated_change_lines
+    listing=KufarListing(
+      ad_id='1083952657',url='x',profile_id='11093294',
+      raw={'list_time':'2026-09-05T06:55:53Z'}
+    )
+    event={'occurred_at':'2026-10-08T07:25:25+00:00'}
+    class HistoryDB:
+        def query(self,sql,params=None):
+            assert 'FROM kufar_versions' in sql
+            return [
+              {
+                'observed_at':'2026-10-08T07:25:04+00:00',
+                'price_eur':37961,'area':28.9,'rooms':1,'floor':3,
+                'address':'Николы Теслы ул, Минск',
+                'raw_json':json.dumps({
+                  'currency':'EUR',
+                  'calculator':[{'currency':'EUR','price':'3796100'}],
+                }),
+              },
+              {
+                'observed_at':'2026-09-24T00:02:21+00:00',
+                'price_eur':41900,'area':25.6,'rooms':1,'floor':2,
+                'address':'Аэродромная ул, Минск',
+                'raw_json':json.dumps({
+                  'currency':'EUR',
+                  'calculator':[{'currency':'EUR','price':'4190000'}],
+                }),
+              },
+            ]
+    lines=backdated_change_lines(HistoryDB(),event,listing)
+    assert lines[0]=='⚠️ **ЗАДНИМ ЧИСЛОМ ИЗМЕНЕНЫ СУЩЕСТВЕННЫЕ ПАРАМЕТРЫ ОБЪЯВЛЕНИЯ**'
+    assert 'цена 41 900 € → 37 961 €' in lines[1]
+    assert 'площадь 25,60 → 28,90 м²' in lines[1]
+    assert 'этаж 2 → 3' in lines[1]
+    assert 'адрес Аэродромная ул, Минск → Николы Теслы ул, Минск' in lines[1]
+
+
+def test_recent_or_non_material_change_is_not_marked_backdated():
+    from radar.main import backdated_change_lines
+    class SameDB:
+        def query(self,sql,params=None):
+            return [
+              {'price_eur':37961,'area':28.9,'rooms':1,'floor':3,'address':'Николы Теслы ул, Минск','raw_json':'{}'},
+              {'price_eur':37961,'area':28.9,'rooms':1,'floor':2,'address':'Николы Теслы ул, Минск','raw_json':'{}'},
+            ]
+    recent=KufarListing(ad_id='1',url='x',profile_id='11093294',raw={'list_time':'2026-10-08T06:55:53Z'})
+    event={'occurred_at':'2026-10-08T07:25:25+00:00'}
+    assert backdated_change_lines(SameDB(),event,recent)==[]
+
+    old=KufarListing(ad_id='1',url='x',profile_id='11093294',raw={'list_time':'2026-09-05T06:55:53Z'})
+    assert backdated_change_lines(SameDB(),event,old)==[]
