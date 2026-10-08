@@ -176,15 +176,25 @@ def main():
         ))
         db.batch(statements)
 
-    pending = db.query("SELECT id,message,ad_id,bir_id FROM kufar_price_alert_queue WHERE status='pending' ORDER BY id LIMIT 10")
+    local_now = datetime.now(MINSK)
+    quiet_hours = not (8 <= local_now.hour < 22)
+    # Detection and queue writes above continue overnight; only delivery waits.
+    pending = [] if quiet_hours else db.query(
+        "SELECT id,message,ad_id,bir_id,created_at FROM kufar_price_alert_queue WHERE status='pending' ORDER BY id LIMIT 10"
+    )
     telegram = Telegram() if pending else None
     sent = 0
     for item in pending:
-        response = telegram.send(chat, item['message'], keyboard=buttons(item['ad_id'], item['bir_id']), parse_mode='HTML')
+        detected = datetime.fromisoformat(str(item['created_at'])).replace(tzinfo=timezone.utc)
+        original_time = detected.astimezone(MINSK).strftime('%d.%m.%Y %H:%M')
+        message = item['message'] + f'\\n🕒 Обнаружено радаром: {original_time}'
+        response = telegram.send(chat, message, keyboard=buttons(item['ad_id'], item['bir_id']), parse_mode='HTML')
         if not response.get('ok'):
             raise RuntimeError('Старый Telegram бот не подтвердил доставку')
         db.execute("UPDATE kufar_price_alert_queue SET status='sent',sent_at=datetime('now'),attempts=attempts+1,error=NULL WHERE id=?", [item['id']])
         sent += 1
+    if quiet_hours:
+        print('TELEGRAM_QUIET_HOURS: price alerts retained until 08:00 Minsk')
     db.execute(
         "INSERT INTO service_state(key,value,updated_at) VALUES(?,?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
