@@ -181,7 +181,75 @@ def _fmt_source_price(value):
         number=f"{float(amount):,.0f}".replace(',',' ')
     except (TypeError,ValueError):
         number=str(amount)
-    suffix={'EUR':' €','USD':' 
+    suffix={'EUR':' €','USD':' $','BYN':' BYN','RUB':' ₽'}.get(str(currency).upper(),' '+str(currency))
+    return number+suffix
+
+def _history_value_changed(a,b):
+    if a is None or b is None:
+        return a is not b
+    try:
+        return float(a)!=float(b)
+    except (TypeError,ValueError):
+        return str(a)!=str(b)
+
+def backdated_change_lines(db,event,k):
+    """Describe a material edit made to an older Kufar card without changing its publication date."""
+    detected=parse_any_ts((event or {}).get('occurred_at'))
+    list_time=parse_any_ts((k.raw or {}).get('list_time'))
+    if not detected or not list_time or detected-list_time<timedelta(hours=24):
+        return []
+
+    rows=db.query(
+      """SELECT observed_at,price_eur,area,rooms,floor,address,raw_json
+         FROM kufar_versions
+         WHERE ad_id=? AND observed_at<=?
+         ORDER BY observed_at DESC LIMIT 2""",
+      [str(k.ad_id),(event or {}).get('occurred_at')]
+    )
+    if len(rows)<2:
+        return []
+
+    current,previous=rows[0],rows[1]
+    changes=[]
+    core_changed=False
+
+    current_source=_version_source_price(current)
+    previous_source=_version_source_price(previous)
+    if current_source and previous_source:
+        price_changed=current_source!=previous_source
+    else:
+        price_changed=_history_value_changed(previous.get('price_eur'),current.get('price_eur'))
+    if price_changed:
+        core_changed=True
+        before=_fmt_source_price(previous_source) if previous_source else fmt_eur(previous.get('price_eur'))
+        after=_fmt_source_price(current_source) if current_source else fmt_eur(current.get('price_eur'))
+        changes.append(f"цена {before} → {after}")
+
+    if _history_value_changed(previous.get('area'),current.get('area')):
+        core_changed=True
+        changes.append(f"площадь {fmt_area(previous.get('area'))} → {fmt_area(current.get('area'))} м²")
+    if _history_value_changed(previous.get('rooms'),current.get('rooms')):
+        core_changed=True
+        changes.append(f"комнаты {fmt_rooms(previous.get('rooms'))} → {fmt_rooms(current.get('rooms'))}")
+
+    context_changes=[]
+    if _history_value_changed(previous.get('floor'),current.get('floor')):
+        context_changes.append(f"этаж {fmt_rooms(previous.get('floor'))} → {fmt_rooms(current.get('floor'))}")
+    if _history_value_changed(previous.get('address'),current.get('address')):
+        context_changes.append(
+          f"адрес {previous.get('address') or '—'} → {current.get('address') or '—'}"
+        )
+
+    if not core_changed:
+        return []
+
+    changes += context_changes
+    return [
+      '⚠️ **ЗАДНИМ ЧИСЛОМ ИЗМЕНЕНЫ СУЩЕСТВЕННЫЕ ПАРАМЕТРЫ ОБЪЯВЛЕНИЯ**',
+      'Изменено: '+' · '.join(changes),
+    ]
+
+def telegram_html(text):
     escaped=html.escape(str(text),quote=False)
     return re.sub(r'\*\*(.+?)\*\*',r'<b>\1</b>',escaped)
 
