@@ -1062,6 +1062,60 @@ def safe_send(tg,chat,text,**kwargs):
         print(f'TELEGRAM_SEND_ERROR chat={chat} type={type(exc).__name__} detail={exc}')
         return False
 
+AUTO_QUEUE_STATE='telegram_auto_notification_queue_v1'
+
+def load_auto_queue(db):
+    try:
+        value=json.loads(db.get_state(AUTO_QUEUE_STATE,'[]') or '[]')
+        return value if isinstance(value,list) else []
+    except (TypeError,ValueError):
+        return []
+
+def save_auto_queue(db,queue):
+    db.set_state(AUTO_QUEUE_STATE,json.dumps(queue,ensure_ascii=False,separators=(',',':')))
+
+def queue_auto_notification(db,queue,chats,text,keyboard=None,parse_mode='HTML'):
+    # Persist alerts (and original detection text) before attempting Telegram.
+    recipients=list(dict.fromkeys(str(chat) for chat in chats))
+    if not recipients:
+        return
+    queue.append({
+        'id':secrets.token_hex(12),
+        'queued_at':datetime.now(timezone.utc).isoformat(),
+        'text':text,
+        'keyboard':keyboard,
+        'parse_mode':parse_mode,
+        'pending_chats':recipients,
+    })
+    save_auto_queue(db,queue)
+
+def flush_auto_queue(db,tg,queue,local_now):
+    # Minsk quiet hours: 22:00 inclusive until 08:00 exclusive.
+    if not 8 <= local_now.hour < 22:
+        print(f'TELEGRAM_QUIET_HOURS pending={len(queue)}')
+        return 0
+    sent=0
+    while queue:
+        alert=queue[0]
+        remaining=alert.get('pending_chats') or []
+        if not remaining:
+            queue.pop(0)
+            save_auto_queue(db,queue)
+            continue
+        chat=str(remaining[0])
+        if not safe_send(tg,chat,alert.get('text',''),
+                         keyboard=alert.get('keyboard'),
+                         parse_mode=alert.get('parse_mode')):
+            # Retry on the next radar run without losing the original timestamp.
+            break
+        alert['pending_chats']=remaining[1:]
+        sent+=1
+        if not alert['pending_chats']:
+            queue.pop(0)
+        save_auto_queue(db,queue)
+    print(f'TELEGRAM_AUTO_DELIVERY sent={sent} pending={len(queue)}')
+    return sent
+
 def should_live_notify(local_now):
     # There is no separate morning digest anymore, so new violations must not
     # disappear merely because they were detected outside the old daytime window.
@@ -1223,24 +1277,27 @@ async def run():
 
     local_now=datetime.now(MINSK)
 
+    auto_queue=load_auto_queue(db)
     if auto_chats and should_live_notify(local_now):
         actionable_new=actionable_event_records(all_new)
         mass,single_records=split_mass_records(actionable_new)
         for field,profile_id,records in mass:
-            for chat in auto_chats:
-                safe_send(
-                  tg,chat,telegram_html(fmt_mass_event_group(field,profile_id,records)),
-                  parse_mode='HTML'
-                )
+            text=telegram_html(fmt_mass_event_group(field,profile_id,records))
+            times=[fmt_short_dt_minsk(event.get('occurred_at')) for event,_ in records]
+            times=[t for t in times if t]
+            if times:
+                text+='\\n🕒 Обнаружено: '+html.escape(', '.join(dict.fromkeys(times)))
+            queue_auto_notification(db,auto_queue,auto_chats,text)
         grouped={}
         for e,k in single_records:
             grouped.setdefault(k.ad_id,{'k':k,'events':[]})['events'].append(e)
         for item in grouped.values():
-            for chat in auto_chats:
-                safe_send(
-                  tg,chat,telegram_html(fmt_event_group(db,item['events'],item['k'])),
-                  keyboard=event_link_keyboard(db,item['events'][0],item['k']),parse_mode='HTML'
-                )
+            queue_auto_notification(
+                db,auto_queue,auto_chats,
+                telegram_html(fmt_event_group(db,item['events'],item['k'])),
+                keyboard=event_link_keyboard(db,item['events'][0],item['k'])
+            )
+    flush_auto_queue(db,tg,auto_queue,local_now)
 
     for chat in show_chats-force_chats:
         safe_state_summary(db,tg,chat,keyboard=True)
