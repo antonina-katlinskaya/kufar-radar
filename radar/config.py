@@ -20,6 +20,24 @@ KUFAR_PROFILES=(
       'contact_person':None,
       'audit_today_on_baseline':True,
     },
+    {
+      'id':'8517496',
+      'label':'Анастасия Биянова',
+      'contact_person':'Анастасия Биянова',
+      'audit_today_on_baseline':True,
+    },
+    {
+      'id':'11162944',
+      'label':'Анна Зенкевич',
+      'contact_person':'Анна Зенкевич',
+      'audit_today_on_baseline':True,
+    },
+    {
+      'id':'10704279',
+      'label':'Жанна Вакуленчик',
+      'contact_person':'Жанна Вакуленчик',
+      'audit_today_on_baseline':True,
+    },
 )
 
 @dataclass(frozen=True)
