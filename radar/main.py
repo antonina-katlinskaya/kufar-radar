@@ -277,8 +277,9 @@ def subscribed_chat_ids(db):
     return list(dict.fromkeys(values))
 
 def automatic_chat_ids(db):
-    """Live violation alerts go to every explicitly connected subscriber."""
-    return subscribed_chat_ids(db)
+    """Test mode: automatic alerts go only to the original owner chat."""
+    owner=db.get_state('telegram_chat_id')
+    return [str(owner)] if owner else []
 
 def add_subscriber(db,chat_id):
     chat_id=str(chat_id)
@@ -1103,6 +1104,13 @@ def flush_auto_queue(db,tg,queue,local_now):
             save_auto_queue(db,queue)
             continue
         chat=str(remaining[0])
+        owner=db.get_state('telegram_chat_id')
+        if not owner or chat!=str(owner):
+            alert['pending_chats']=remaining[1:]
+            if not alert['pending_chats']:
+                queue.pop(0)
+            save_auto_queue(db,queue)
+            continue
         if not safe_send(tg,chat,alert.get('text',''),
                          keyboard=alert.get('keyboard'),
                          parse_mode=alert.get('parse_mode')):
