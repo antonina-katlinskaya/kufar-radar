@@ -54,3 +54,27 @@ def test_failed_chat_is_retried_without_resending_to_other_chat():
     assert flush_auto_queue(db, tg, queue, datetime(2026, 10, 9, 8, 5, tzinfo=MINSK)) == 1
     assert [c for c, _, _ in tg.sent] == ['owner', 'sister']
     assert load_auto_queue(db) == []
+
+
+def test_technical_notification_only_reaches_owner():
+    db, tg = FakeDB(), FakeTelegram()
+    db.set_state('telegram_chat_id', 'owner')
+    queue = []
+    queue_auto_notification(
+        db, queue, ['owner', 'sister'], 'Technical failure',
+        category='technical',
+    )
+    assert flush_auto_queue(db, tg, queue, datetime(2026, 10, 9, 8, 0, tzinfo=MINSK)) == 1
+    assert [chat for chat, _, _ in tg.sent] == ['owner']
+
+
+def test_violation_notification_reaches_both_subscribers():
+    db, tg = FakeDB(), FakeTelegram()
+    db.set_state('telegram_chat_id', 'owner')
+    queue = []
+    queue_auto_notification(
+        db, queue, ['owner', 'sister'], 'Нарушение обнаружено',
+        category='violation',
+    )
+    assert flush_auto_queue(db, tg, queue, datetime(2026, 10, 9, 8, 0, tzinfo=MINSK)) == 2
+    assert [chat for chat, _, _ in tg.sent] == ['owner', 'sister']
