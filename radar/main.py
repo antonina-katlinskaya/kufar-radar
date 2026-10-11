@@ -1147,7 +1147,7 @@ def resolved_price_notification(db, event, k, observed_at):
     if b.get('price_fast_eur') is not None:
         parts.append(f"**Спеццена BIR: {fmt_eur(b.get('price_fast_eur'))}**")
     parts+=['',f"🕒 Обнаружено исправление: {fmt_short_dt_minsk(observed_at) or '—'}"]
-    return telegram_html('\\n'.join(parts)),event_link_keyboard(db,event,k)
+    return telegram_html('\n'.join(parts)),event_link_keyboard(db,event,k)
 
 def should_live_notify(local_now):
     # There is no separate morning digest anymore, so new violations must not
@@ -1289,7 +1289,7 @@ async def run():
         if (prior_price and prior_price.get('id') is not None
                 and 'price' not in remaining
                 and not any(field in ACTIONABLE_FIELDS for field in remaining)
-                and r.get('status') not in ('INSUFFICIENT','REVIEW')):
+                and r.get('status')=='OK'):
             resolved_price.append((dict(prior_price),k))
         if r.get('status')=='INSUFFICIENT':
             if k.ad_id in pending:
