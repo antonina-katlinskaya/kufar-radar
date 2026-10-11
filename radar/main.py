@@ -1124,6 +1124,31 @@ def flush_auto_queue(db,tg,queue,local_now):
     print(f'TELEGRAM_AUTO_DELIVERY sent={sent} pending={len(queue)}')
     return sent
 
+def resolved_price_notification(db, event, k, observed_at):
+    """Report a verified closure, without claiming an edit if the source did not change."""
+    old=event.get('new_value')
+    new=k.price_eur
+    changed=_history_value_changed(old,new)
+    b,building,address=event_context(db,event,k)
+    parts=[
+      '✅ **РАСХОЖДЕНИЕ ПО ЦЕНЕ УСТРАНЕНО**','',
+      f"👤 **{profile_label(k.profile_id)}**",
+    ]
+    parts+=object_identity_lines(
+      card_house_label(b) or building,address,b.get('unit_no'),
+      k.rooms,k.area,k.floor
+    )
+    parts+=['']
+    if changed:
+        parts.append(f"💶 **Kufar: {fmt_eur(old)} → {fmt_eur(new)}**")
+    else:
+        parts.append(f"💶 **Kufar: {fmt_eur(new)}**")
+        parts.append('Расхождение закрылось без зафиксированного изменения цены Kufar.')
+    if b.get('price_fast_eur') is not None:
+        parts.append(f"**Спеццена BIR: {fmt_eur(b.get('price_fast_eur'))}**")
+    parts+=['',f"🕒 Обнаружено исправление: {fmt_short_dt_minsk(observed_at) or '—'}"]
+    return telegram_html('\\n'.join(parts)),event_link_keyboard(db,event,k)
+
 def should_live_notify(local_now):
     # There is no separate morning digest anymore, so new violations must not
     # disappear merely because they were detected outside the old daytime window.
@@ -1253,10 +1278,19 @@ async def run():
     # whose Kufar publication/update time is today in Minsk.
     session=AuditSession(db,[item.ad_id for item in targets])
     all_new=[]
+    resolved_price=[]
     for k in targets:
         r=session.audit(k)
+        prior_price=(session.active.get(k.ad_id) or {}).get('price')
         for e in session.sync(k,r):
             all_new.append((e,k))
+        # Only an actual audit-driven closure; never policy migration or ad disappearance.
+        remaining=session.active.get(k.ad_id) or {}
+        if (prior_price and prior_price.get('id') is not None
+                and 'price' not in remaining
+                and not any(field in ACTIONABLE_FIELDS for field in remaining)
+                and r.get('status') not in ('INSUFFICIENT','REVIEW')):
+            resolved_price.append((dict(prior_price),k))
         if r.get('status')=='INSUFFICIENT':
             if k.ad_id in pending:
                 pending[k.ad_id]['attempts']=int(pending[k.ad_id].get('attempts') or 0)+1
@@ -1286,6 +1320,10 @@ async def run():
     local_now=datetime.now(MINSK)
 
     auto_queue=load_auto_queue(db)
+    if auto_chats:
+        for event,k in resolved_price:
+            notice,keyboard=resolved_price_notification(db,event,k,datetime.now(timezone.utc).isoformat())
+            queue_auto_notification(db,auto_queue,auto_chats,notice,keyboard=keyboard)
     if auto_chats and should_live_notify(local_now):
         actionable_new=actionable_event_records(all_new)
         mass,single_records=split_mass_records(actionable_new)
