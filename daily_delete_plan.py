@@ -83,6 +83,7 @@ def plan(rows,snapshot_at,expected_publications=0,day=None):
             'max_per_hour':PER_HOUR,'execution_enabled':False,'rows':output}
 
 def main():
+    raise RuntimeError('DISABLED: profile 11093294 is Alyona Dovgun, not Elena Boriskina. Use verified employee profile 11852045 only.')
     db=D1()
     meta=db.query('SELECT last_cycle_at AS seen FROM kufar_bridge_state WHERE profile_id=? LIMIT 1',[PROFILE])
     stamp=(meta[0] or {}).get('seen') if meta else None
