@@ -71,7 +71,7 @@ def plan(rows, snapshot_at, expected_publications=95, day=None):
             'planned_count':len(out),'max_per_hour':PER_HOUR,'rows':out}
 def main():
     d1=D1()
-    meta=d1.query('SELECT updated_at AS seen FROM state WHERE key=? LIMIT 1',['last_kufar_count:11093294'])
+    meta=d1.query('SELECT last_cycle_at AS seen FROM kufar_bridge_state WHERE profile_id=? LIMIT 1',[PROFILE])
     stamp=(meta[0] or {}).get('seen') if meta else None
     snap=datetime.fromisoformat(str(stamp).replace('Z','+00:00')) if stamp else None
     if snap and snap.tzinfo is None:snap=snap.replace(tzinfo=timezone.utc)
