@@ -25,7 +25,7 @@ def plan(rows, snapshot_at, expected_publications=95, day=None):
     now=datetime.now(timezone.utc)
     if not rows: raise ValueError('Radar returned zero active ads; stop')
     if not snapshot_at or now-snapshot_at>timedelta(minutes=45):
-        raise ValueError('Radar active-ad snapshot is stale; stop')
+        raise ValueError(f'Radar full scan too old: {snapshot_at!s}; current UTC {now.isoformat()}; stop')
     date=day or now.astimezone(ZoneInfo('Europe/Minsk')).date()
     groups={}
     all_ids=set()
