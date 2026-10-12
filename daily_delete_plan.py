@@ -16,7 +16,7 @@ MIN_KEEP_DEFAULT=2
 MIN_KEEP_SMALL=4
 MIN_AGE_HOURS=24
 SQL="""
-SELECT ad_id, profile_id, area, list_time, price_eur, url, last_seen_at
+SELECT ad_id, profile_id, area, list_time, price_eur, url
 FROM kufar_ads_live
 WHERE profile_id=? AND present=1
 ORDER BY area, list_time, ad_id
@@ -71,7 +71,7 @@ def plan(rows, snapshot_at, expected_publications=95, day=None):
             'planned_count':len(out),'max_per_hour':PER_HOUR,'rows':out}
 def main():
     d1=D1()
-    meta=d1.query('SELECT MAX(last_seen_at) AS seen FROM kufar_ads_live WHERE profile_id=? AND present=1',[PROFILE])
+    meta=d1.query('SELECT updated_at AS seen FROM state WHERE key=? LIMIT 1',['last_kufar_count:11093294'])
     stamp=(meta[0] or {}).get('seen') if meta else None
     snap=datetime.fromisoformat(str(stamp).replace('Z','+00:00')) if stamp else None
     if snap and snap.tzinfo is None:snap=snap.replace(tzinfo=timezone.utc)

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/daily-delete-plan.yml']
+    paths: ['.github/workflows/daily-delete-plan.yml', 'daily_delete_plan.py']
   schedule:
     - cron: '0 3 * * *' # 06:00 Minsk (UTC+3)
 permissions:
