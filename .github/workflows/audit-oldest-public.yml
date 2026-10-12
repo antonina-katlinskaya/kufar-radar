@@ -1,0 +1,38 @@
+name: Audit Oldest Kufar Public Ads
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/audit-oldest-public.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install httpx==0.28.1
+      - name: Check ten oldest live radar links without authentication
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          CF_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+        run: |
+          python - <<'PY'
+          from radar.d1 import D1
+          import httpx,json,re
+          d=D1()
+          rows=d.query("SELECT ad_id,list_time,url,present FROM kufar_ads_live WHERE profile_id='11093294' AND present=1 ORDER BY list_time ASC LIMIT 10")
+          with httpx.Client(timeout=22,follow_redirects=True,headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36'}) as client:
+           for row in rows:
+            try:
+             r=client.get(row['url'])
+             text=r.text[:200000].lower()
+             evidence={'ad_id_in_html':str(row['ad_id']) in text,'missing_words':bool(re.search('объявление не найдено|объявление удалено|объявление снято|страница не найдена',text))}
+             print('PUBLIC_CHECK',json.dumps({'id':row['ad_id'],'date':row['list_time'],'url':row['url'],'http':r.status_code,'final_url':str(r.url),'title':re.search(r'<title[^>]*>(.*?)</title>',r.text,re.S|re.I).group(1)[:120] if re.search(r'<title[^>]*>(.*?)</title>',r.text,re.S|re.I) else '',**evidence},ensure_ascii=False))
+            except Exception as e: print('PUBLIC_ERROR',row['ad_id'],str(e)[:180])
+          PY
