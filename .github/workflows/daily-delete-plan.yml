@@ -1,6 +1,9 @@
 name: Daily Kufar Deletion Plan
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/daily-delete-plan.yml']
   schedule:
     - cron: '0 3 * * *' # 06:00 Minsk (UTC+3)
 permissions:
