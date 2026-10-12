@@ -24,7 +24,7 @@ ORDER BY area, list_time, ad_id
 def plan(rows, snapshot_at, expected_publications=95, day=None):
     now=datetime.now(timezone.utc)
     if not rows: raise ValueError('Radar returned zero active ads; stop')
-    if not snapshot_at or now-snapshot_at>timedelta(minutes=45):
+    if not snapshot_at or now-snapshot_at>timedelta(hours=3):
         raise ValueError(f'Radar full scan too old: {snapshot_at!s}; current UTC {now.isoformat()}; stop')
     date=day or now.astimezone(ZoneInfo('Europe/Minsk')).date()
     groups={}
@@ -75,7 +75,14 @@ def main():
     stamp=(meta[0] or {}).get('seen') if meta else None
     snap=datetime.fromisoformat(str(stamp).replace('Z','+00:00')) if stamp else None
     if snap and snap.tzinfo is None:snap=snap.replace(tzinfo=timezone.utc)
-    rows=d1.query(SQL,[PROFILE])
+    count_rows=d1.query('SELECT COUNT(*) AS total FROM kufar_ads_live WHERE profile_id=? AND present=1',[PROFILE])
+    total=int(count_rows[0]['total'])
+    rows=[]
+    for offset in range(0,total,400):
+        page=d1.query(SQL+' LIMIT ? OFFSET ?',[PROFILE,400,offset])
+        if not page:raise ValueError('Radar returned an incomplete page; stop')
+        rows.extend(page)
+    if len(rows)!=total:raise ValueError(f'Incomplete inventory: got {len(rows)} of {total}; stop')
     expected=int(os.getenv('EXPECTED_PUBLICATIONS','95'))
     report=plan(rows,snap,expected)
     folder=Path(__file__).parent/'exports'/'daily-delete'
