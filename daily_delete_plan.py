@@ -1,97 +1,105 @@
-"""Generate ONE frozen daily Kufar removal plan from fresh radar D1 data.
-Does not log into Kufar or delete any ads. Requires existing CF_* environment secrets.
-"""
-import csv, json, os, sys
+"""Daily Kufar removal CANDIDATES; no deletion operations. Residential only, fail closed."""
+import csv, json, os
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from radar.d1 import D1
 
 PROFILE='11093294'
-TARGET=1000
 PER_HOUR=6
 HOURS=list(range(7,24))
 CAP=PER_HOUR*len(HOURS)
-MIN_KEEP_DEFAULT=2
-MIN_KEEP_SMALL=4
-MIN_AGE_HOURS=24
-SQL="""
-SELECT ad_id, profile_id, area, list_time, price_eur, url
-FROM kufar_ads_live
-WHERE profile_id=? AND present=1
-ORDER BY area, list_time, ad_id
-"""
-def plan(rows, snapshot_at, expected_publications=95, day=None):
+KEEP_PER_DAY=15
+TZ=ZoneInfo('Europe/Minsk')
+SQL="""SELECT ad_id, profile_id, area, list_time, price_eur, price_byn, url, raw_json
+FROM kufar_ads_live WHERE profile_id=? AND present=1
+ORDER BY ad_id"""
+
+def parse_dt(s):
+    v=datetime.fromisoformat(str(s).replace('Z','+00:00'))
+    return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v
+
+def type_of(ad):
+    """Only explicit category evidence can mark residential; unknown is always protected."""
+    try: raw=json.loads(ad.get('raw_json') or '{}')
+    except (TypeError, ValueError): return 'UNKNOWN'
+    if not isinstance(raw,dict):return 'UNKNOWN'
+    # Kufar raw data may differ by category and collection generation.
+    # Never infer 'residential' from price, area, rooms, URL, or a textual title.
+    # Require a verified category field AND approved category mapping.
+    cat=raw.get('category')
+    if not isinstance(cat,dict):return 'UNKNOWN'
+    identifier=str(cat.get('id') or '')
+    # Intentionally empty until real category values have been audited.
+    APPROVED_RESIDENTIAL_CATEGORY_IDS=set()
+    if identifier in APPROVED_RESIDENTIAL_CATEGORY_IDS:return 'RESIDENTIAL'
+    return 'PROTECTED_UNKNOWN_OR_COMMERCIAL'
+
+def plan(rows,snapshot_at,expected_publications=0,day=None):
     now=datetime.now(timezone.utc)
-    if not rows: raise ValueError('Radar returned zero active ads; stop')
-    if not snapshot_at or now-snapshot_at>timedelta(hours=3):
-        raise ValueError(f'Radar full scan too old: {snapshot_at!s}; current UTC {now.isoformat()}; stop')
-    date=day or now.astimezone(ZoneInfo('Europe/Minsk')).date()
-    groups={}
-    all_ids=set()
-    for r in rows:
-        if r['profile_id']!=PROFILE: raise ValueError('Wrong profile; stop')
-        key=str(r.get('ad_id') or '')
-        if not key or key in all_ids: raise ValueError('Missing/duplicate ad ID; stop')
-        all_ids.add(key)
-        area=r.get('area')
-        if area is None or float(area)<=0: raise ValueError('Missing area; stop')
-        if not r.get('list_time') or not r.get('url'): raise ValueError('Missing date or URL; stop')
-        groups.setdefault(float(area),[]).append(r)
-    limit=min(CAP,max(0,len(rows)+expected_publications-TARGET))
-    available=[]
-    for area,items in groups.items():
-        items.sort(key=lambda r:(r['list_time'],str(r['ad_id'])))
-        keep=MIN_KEEP_SMALL if area<30 else MIN_KEEP_DEFAULT
-        surplus=max(0,len(items)-keep)
-        for ad in items[:surplus]:
-            stamp=datetime.fromisoformat(str(ad['list_time']).replace('Z','+00:00'))
-            if stamp.tzinfo is None: stamp=stamp.replace(tzinfo=timezone.utc)
-            if now-stamp<timedelta(hours=MIN_AGE_HOURS): continue
-            available.append((len(items),stamp,ad,area,keep))
-    available.sort(key=lambda x:(-x[0],x[1],str(x[2]['ad_id'])))
-    selected=[]
-    by_area={}
-    for group_count,stamp,ad,area,keep in available:
-        if len(selected)>=limit:break
-        if len(groups[area])-by_area.get(area,0)<=keep:continue
-        by_area[area]=by_area.get(area,0)+1
-        selected.append((ad,area,group_count,keep))
-    out=[]
-    for i,(ad,area,group_count,keep) in enumerate(selected):
-        hour=HOURS[i//PER_HOUR]; minute=5+(i%PER_HOUR)*9
-        out.append({'date':date.strftime('%d.%m.%Y'),'time':f'{hour:02d}:{minute:02d}',
-                    'profile_id':PROFILE,'ad_id':str(ad['ad_id']),'url':ad['url'],
-                    'area':area,'price_eur':ad.get('price_eur'),'published_at':ad['list_time'],
-                    'group_count':group_count,'reason':f'Oldest surplus; retain {keep} of area {area}',
-                    'status':'PLANNED','result':'','checked_at':''})
-    return {'date':str(date),'profile_id':PROFILE,'source':'radar_D1_kufar_ads_live',
+    if not snapshot_at or now-snapshot_at>timedelta(hours=3):raise ValueError('Radar completed scan not fresh; abort')
+    if not rows:raise ValueError('No active ads; abort')
+    ids=set()
+    grouped=defaultdict(list)
+    protected=0
+    for ad in rows:
+        id=str(ad.get('ad_id') or '')
+        if ad.get('profile_id')!=PROFILE or not id or id in ids:raise ValueError('Profile/ID mismatch')
+        ids.add(id)
+        if type_of(ad)!='RESIDENTIAL':
+            protected+=1
+            continue
+        if ad.get('price_byn') is None or not ad.get('list_time') or not ad.get('url'):
+            protected+=1
+            continue
+        published=parse_dt(ad['list_time'])
+        if published>now+timedelta(minutes=5):raise ValueError('Future publication timestamp')
+        date=published.astimezone(TZ).date()
+        grouped[date].append((float(ad['price_byn']),published,id,ad))
+    surplus=[]
+    for date,items in sorted(grouped.items()):
+        # Cheapest first, and for a price tie preserve the LATEST listings.
+        sorted_items=sorted(items,key=lambda x:(x[0],-x[1].timestamp(),x[2]))
+        for cost,published,id,ad in sorted_items[KEEP_PER_DAY:]:
+            surplus.append((date,published,id,ad,len(items)))
+    # Earliest days first, earliest posts first among deletable surplus.
+    surplus.sort(key=lambda x:(x[0],x[1],x[2]))
+    day=day or now.astimezone(TZ).date()
+    chosen=surplus[:CAP]
+    output=[]
+    for i,(published_day,published,id,ad,n) in enumerate(chosen):
+        h=HOURS[i//PER_HOUR]; minute=5+9*(i%PER_HOUR)
+        output.append({
+            'date':day.strftime('%d.%m.%Y'),'time':f'{h:02d}:{minute:02d}',
+            'profile_id':PROFILE,'ad_id':id,'url':ad['url'],'area':ad.get('area'),
+            'price_eur':ad.get('price_eur'),'published_at':ad['list_time'],
+            'group_count':n,'reason':f'Residential surplus on {published_day}; keep 15 cheapest, latest on ties',
+            'status':'REVIEW_REQUIRED','result':'','checked_at':''})
+    return {'date':str(day),'profile_id':PROFILE,'source':'radar_D1_kufar_ads_live',
             'snapshot_at':snapshot_at.isoformat(),'active_count':len(rows),
-            'expected_publications':expected_publications,'target':TARGET,
-            'planned_count':len(out),'max_per_hour':PER_HOUR,'rows':out}
+            'protected_unclassified_count':protected,'residential_days_verified':len(grouped),
+            'eligible_count':len(surplus),'planned_count':len(output),
+            'max_per_hour':PER_HOUR,'execution_enabled':False,'rows':output}
+
 def main():
-    d1=D1()
-    meta=d1.query('SELECT last_cycle_at AS seen FROM kufar_bridge_state WHERE profile_id=? LIMIT 1',[PROFILE])
+    db=D1()
+    meta=db.query('SELECT last_cycle_at AS seen FROM kufar_bridge_state WHERE profile_id=? LIMIT 1',[PROFILE])
     stamp=(meta[0] or {}).get('seen') if meta else None
-    snap=datetime.fromisoformat(str(stamp).replace('Z','+00:00')) if stamp else None
-    if snap and snap.tzinfo is None:snap=snap.replace(tzinfo=timezone.utc)
-    count_rows=d1.query('SELECT COUNT(*) AS total FROM kufar_ads_live WHERE profile_id=? AND present=1',[PROFILE])
-    total=int(count_rows[0]['total'])
+    snapshot=parse_dt(stamp) if stamp else None
+    total=int(db.query('SELECT COUNT(*) AS total FROM kufar_ads_live WHERE profile_id=? AND present=1',[PROFILE])[0]['total'])
     rows=[]
     for offset in range(0,total,400):
-        page=d1.query(SQL+' LIMIT ? OFFSET ?',[PROFILE,400,offset])
-        if not page:raise ValueError('Radar returned an incomplete page; stop')
+        page=db.query(SQL+' LIMIT ? OFFSET ?',[PROFILE,400,offset])
         rows.extend(page)
-    if len(rows)!=total:raise ValueError(f'Incomplete inventory: got {len(rows)} of {total}; stop')
-    expected=int(os.getenv('EXPECTED_PUBLICATIONS','95'))
-    report=plan(rows,snap,expected)
-    folder=Path(__file__).parent/'exports'/'daily-delete'
-    folder.mkdir(parents=True,exist_ok=True)
-    stem=f"DELETE_PLAN_{report['date'].replace('.','-')}"
-    (folder/(stem+'.json')).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-    with (folder/(stem+'.csv')).open('w',newline='',encoding='utf-8-sig') as f:
-        writer=csv.DictWriter(f,fieldnames=['date','time','profile_id','ad_id','url','area','price_eur','published_at','group_count','reason','status','result','checked_at'])
-        writer.writeheader();writer.writerows(report['rows'])
+    if len(rows)!=total:raise ValueError(f'Incomplete inventory {len(rows)}/{total}')
+    report=plan(rows,snapshot)
+    out=Path(__file__).parent/'exports'/'daily-delete'
+    out.mkdir(parents=True,exist_ok=True)
+    stem='DELETE_PLAN_'+report['date']
+    (out/(stem+'.json')).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    cols=['date','time','profile_id','ad_id','url','area','price_eur','published_at','group_count','reason','status','result','checked_at']
+    with (out/(stem+'.csv')).open('w',newline='',encoding='utf-8-sig') as f:
+        writer=csv.DictWriter(f,fieldnames=cols);writer.writeheader();writer.writerows(report['rows'])
     print(json.dumps({k:v for k,v in report.items() if k!='rows'},ensure_ascii=False))
-if __name__=='__main__':
-    main()
+if __name__=='__main__':main()
