@@ -28,12 +28,12 @@ def type_of(ad):
     # Kufar raw data may differ by category and collection generation.
     # Never infer 'residential' from price, area, rooms, URL, or a textual title.
     # Require a verified category field AND approved category mapping.
-    cat=raw.get('category')
-    if not isinstance(cat,dict):return 'UNKNOWN'
-    identifier=str(cat.get('id') or '')
-    # Intentionally empty until real category values have been audited.
-    APPROVED_RESIDENTIAL_CATEGORY_IDS=set()
-    if identifier in APPROVED_RESIDENTIAL_CATEGORY_IDS:return 'RESIDENTIAL'
+    identifier=str(raw.get('category') or '')
+    params=raw.get('ad_parameters') or []
+    category_param=next((x for x in params if isinstance(x,dict) and x.get('p')=='category'),None)
+    # Verified against the live 12 Oct 2026 radar D1 snapshot: 1010 = Квартиры.
+    if identifier=='1010' and category_param and str(category_param.get('v'))=='1010' and category_param.get('vl')=='Квартиры':
+        return 'RESIDENTIAL'
     return 'PROTECTED_UNKNOWN_OR_COMMERCIAL'
 
 def plan(rows,snapshot_at,expected_publications=0,day=None):
