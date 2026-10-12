@@ -1,0 +1,37 @@
+name: Audit Kufar Categories For Delete Plan
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/audit-delete-categories.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install httpx==0.28.1
+      - name: Read category distribution only
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          CF_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+        run: |
+          python - <<'PY'
+          from radar.d1 import D1
+          import json
+          d=D1()
+          queries=[
+           "SELECT COUNT(*) n, MIN(list_time) oldest, MAX(list_time) newest FROM kufar_ads_live WHERE profile_id='11093294' AND present=1",
+           "SELECT substr(raw_json,1,1) raw_first, COUNT(*) n FROM kufar_ads_live WHERE profile_id='11093294' AND present=1 GROUP BY 1",
+           "SELECT json_extract(raw_json,'$.category') category, json_extract(raw_json,'$.cat') cat, json_extract(raw_json,'$.category_id') category_id, json_extract(raw_json,'$.ad_parameters[0].p') first_param, COUNT(*) n FROM kufar_ads_live WHERE profile_id='11093294' AND present=1 GROUP BY 1,2,3,4 ORDER BY n DESC LIMIT 25",
+           "SELECT ad_id, substr(raw_json,1,800) raw_sample FROM kufar_ads_live WHERE profile_id='11093294' AND present=1 ORDER BY list_time ASC LIMIT 2"
+          ]
+          for i,q in enumerate(queries):
+           try: print('AUDIT_'+str(i),json.dumps(d.query(q),ensure_ascii=False)[:5000])
+           except Exception as e:print('AUDIT_ERROR_'+str(i),str(e)[:400])
+          PY
