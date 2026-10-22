@@ -113,6 +113,30 @@ def kufar_change_relevant(old,new):
         return True
     return price_change_relevant(old,new)
 
+def _fresh_first_seen_listing(raw, checked_at):
+    """A first sighting is actionable only when Kufar dates the card today.
+
+    Older cards newly entering crawler coverage seed history silently. Later
+    real edits (price, area, rooms, promotion or list_time) remain actionable.
+    """
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    date_text = _raw_list_time(raw)
+    if not date_text:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(date_text).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        checked = datetime.fromisoformat(str(checked_at).replace('Z', '+00:00'))
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+        minsk = ZoneInfo('Europe/Minsk')
+        return dt.astimezone(minsk).date() == checked.astimezone(minsk).date()
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
 def save_kufar(db,items,profile_id):
     cur=load_current_kufar(db,profile_id); ts=now(); changed=[]; seen=set(); stm=[]
     prev_active=sum(1 for r in cur.values() if r.get('active'))
@@ -127,7 +151,7 @@ def save_kufar(db,items,profile_id):
         if not data_changed:
             continue
 
-        audit_changed=kufar_change_relevant(old,x)
+        audit_changed=kufar_change_relevant(old,x) and (old is not None or _fresh_first_seen_listing(x.raw,ts))
         if audit_changed:
             changed.append(x)
         stm.append(("""INSERT INTO kufar_ads(ad_id,profile_id,url,active,first_seen_at,last_seen_at,price_eur,price_byn,area,rooms,floor,address,title,fingerprint,raw_json)
