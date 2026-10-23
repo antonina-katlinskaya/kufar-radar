@@ -1,4 +1,4 @@
-import re, json
+import re, json, asyncio
 from typing import Any
 import httpx
 from playwright.async_api import async_playwright
@@ -132,6 +132,7 @@ class KufarCollector:
             for page_no in range(1,max_pages+1):
                 q=dict(params)
                 if cursor: q['cursor']=cursor
+                if page_no>1: await asyncio.sleep(2)  # pause between Kufar pages
                 r=await client.get(API_URL,params=q)
                 r.raise_for_status()
                 data=r.json()
@@ -157,6 +158,7 @@ class KufarCollector:
                     for page_no in range(1,8):
                         q=dict(oldest_params)
                         if cursor2: q['cursor']=cursor2
+                        await asyncio.sleep(2)  # pause between Kufar pages
                         r=await client.get(API_URL,params=q)
                         r.raise_for_status()
                         data=r.json()

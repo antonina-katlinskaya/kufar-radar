@@ -4,6 +4,14 @@ name: Radar
 # GitHub Actions remains callable manually and on relevant production pushes.
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even during the night pause (23:00-07:00 Minsk)'
+        type: boolean
+        default: false
+  schedule:
+    # 06:50 Minsk (03:50 UTC) - second night pass.
+    - cron: '50 3 * * *'
   push:
     branches: [main]
     paths:
@@ -19,7 +27,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    # Night pause 23:00-07:00 Minsk: only the 01:00 pass (Cloudflare trigger at 01:07)
+    # and the 06:50 schedule run. Skipped runs make no Kufar/BIR requests.
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        run: |
+          now=$(TZ=Europe/Minsk date +%H%M)
+          run=true
+          if [ "$now" -ge 2300 ] || [ "$now" -lt 700 ]; then
+            run=false
+            if [ "$now" -ge 100 ] && [ "$now" -lt 130 ]; then run=true; fi
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.force }}" = "true" ]; then run=true; fi
+          echo "Minsk time $now -> run=$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
   scan:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
