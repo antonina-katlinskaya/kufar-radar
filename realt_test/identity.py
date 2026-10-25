@@ -60,7 +60,7 @@ def run():
                 matches.append({"profile_id":profile,"name":name,"realt_user_uuid":uid,
                     "realt_names":sorted(entry["names"]),"realt_emails":sorted(entry["emails"]),
                     "realt_active_ads":entry["count"],"matching_phone_count":len(common)})
-    result={"realt_users":len(realt),"profiles":source_counts,"matches":matches,
+    names_summary=[{"uuid":uid,"names":sorted(v["names"]),"emails":sorted(v["emails"]),"listings":v["count"],"has_realt_phone":bool(v["phones"])} for uid,v in realt.items()]\n    candidate_matches=[]\n    for p,full in PROFILES.items():\n        first=full.split()[0].casefold()\n        for v in names_summary:\n            if any(first == n.strip().casefold() or full.casefold() == n.strip().casefold() for n in v["names"]):\n                candidate_matches.append({"profile_id":p,"kufar_name":full,**v,"match_kind":"NAME_ONLY_UNVERIFIED"})\n    result={"realt_users":len(realt),"profiles":source_counts,"matches":matches,"name_candidates":candidate_matches,
             "verified_identity_count":len(matches),"no_phone_values_exported":True}
     import os
     os.makedirs("realt_test",exist_ok=True)
