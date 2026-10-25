@@ -25,9 +25,9 @@ jobs:
           CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
           CF_HISTORY_D1_DATABASE_ID: 'd8dd0219-8070-4f48-980d-312eba26209e'
         run: python -m realt_test.run
-      - uses: actions/upload-artifact@v4
+      - name: Match verified employee identities by phones (read-only)\n        env:\n          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}\n          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}\n          CF_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e\n        run: python -m realt_test.identity\n      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: realt-private-test-results
-          path: realt_test/results.json
+          path: |\n            realt_test/results.json\n            realt_test/identity_results.json
           if-no-files-found: warn
