@@ -87,8 +87,16 @@ def main():
     if str(owner) != OWNER_ID:
         raise RuntimeError('Owner state changed; no message sent')
     result = json.loads(Path('realt_test/results.json').read_text(encoding='utf-8'))
+    from realt_test.history import pending, acknowledge
+    history_db = D1()
+    unsent, _ = pending(history_db, result)
+    if not unsent:
+        print(json.dumps({'notification_sent': False, 'pending_reviews': 0, 'reason': 'No new or changed review cases'}))
+        return
     run_url = f"https://github.com/{REPOSITORY}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     receipt = publish(result, owner, Bot(token), run_url)
+    if receipt['notification_sent'] and len(receipt['documents_sent']) == 3:
+        acknowledge(history_db, unsent)
     result['notification_sent'] = receipt['notification_sent']
     Path('realt_test/results.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(receipt))
