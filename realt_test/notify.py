@@ -69,12 +69,15 @@ def format_card(item, bir_checked_at):
     lines += ['🚪 ' + ' · '.join(specifications), '',
               f"<b>Realt: {price} {currency}</b>"]
     if options:
-        specials = sorted({number(x.get('special_price_eur'), 0) for x in options
-                           if x.get('special_price_eur') is not None})
-        lines.append(f"<b>BIR: {', '.join(specials) + ' €' if specials else 'спеццена не указана'}</b>")
-        lines.append('Нет объекта с одновременным совпадением комнат, точной площади и спеццены')
+        regulars = sorted({number(x.get('regular_price_eur'), 0) for x in options if x.get('regular_price_eur') is not None})
+        specials = sorted({number(x.get('special_price_eur'), 0) for x in options if x.get('special_price_eur') is not None})
+        lines.append("<b>BIR: " + (", ".join(regulars) + " €" if regulars else "обычная цена неизвестна") + "</b>")
+        lines.append("<b>Спеццена BIR: " + (", ".join(specials) + " €" if specials else "не указана") + "</b>")
+        if len(options) > 1:
+            lines.append(f"В BIR найдено {len(options)} объектов с такими комнатами и площадью")
     else:
-        lines.append('<b>BIR: нет объекта с совпадением комнат и точной площади</b>')
+        lines.append("<b>BIR: объект с совпадением комнат и точной площади не найден</b>")
+        lines.append("Обычную и специальную цену BIR установить невозможно")
     timestamps = []
     if date(item.get('created_at')):
         timestamps.append('Realt ' + date(item['created_at']))
