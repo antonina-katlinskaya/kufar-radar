@@ -15,3 +15,17 @@ class VisualCardTests(unittest.TestCase):
         self.assertIn('Realt: 51 465 €',text)
         self.assertIn('🕒 Realt 26.10 10:15 · BIR 26.10 10:22',text)
         self.assertNotIn('\\\\n',text)
+
+    def test_byn_display_and_house_and_radar(self):
+        item={'person':'Анна Зенкевич','rooms':'3','area':'52.5','floor':'5',
+              'address':'Минск Брилевская ул.','house_number':'35','quarter':'Минск Мир',
+              'price':'436000','currency':'933','created_at':'2026-10-23T15:48:40+03:00',
+              'radar_checked_at':'2026-10-26T10:13:03+00:00',
+              'bir_room_area_candidates':[{'regular_price_eur':'80000','special_price_eur':'75000'}]}
+        text=format_card(item,'2026-10-26T10:00:00Z')
+        self.assertIn('436 000 BYN',text)
+        self.assertNotIn('436 000 933',text)
+        self.assertIn('Брилевская ул. 35',text)
+        self.assertIn('BIR: 80 000 €',text)
+        self.assertIn('Спеццена BIR: 75 000 €',text)
+        self.assertIn('радар 26.10 13:13',text)
