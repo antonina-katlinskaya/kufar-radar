@@ -6,11 +6,11 @@ production Kufar workflow or shared subscription list.
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-START_DATE = "2026-10-22"
-END_DATE = "2026-10-25"
+START_DATE = "2026-10-23"
+END_DATE = "2026-10-26"
 CONTROLLED_PEOPLE = (
     "Алёна Довгун", "Ирина Барашенко", "Хатковская",
-    "Анастасия Биянова", "Анна Зенкевич", "Жанна Вакуленчик",
+    "Анастасия Биянова", "Анна Зенкевич", "Жанна Вакуленчик",\n    "Дмитрий Спиридонов", "Наталья Сидорова", "Дарья Иванова", "Ольга Михальченко",
 )
 
 
