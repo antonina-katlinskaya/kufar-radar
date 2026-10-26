@@ -83,9 +83,13 @@ def source(state, budget_reader=None):
         if not current:raise RuntimeError("Current source snapshot is empty")
         latest=max(r["snapshot_at"] for r in current)
     age=datetime.now(timezone.utc)-checked_time(marker.get("completed_at",latest) if marker else latest)
-    if age<timedelta(minutes=-5) or age>MAX_AGE:raise RuntimeError("Current Realt snapshot is stale or future")
+    if age<timedelta(minutes=-5):raise RuntimeError("Current Realt snapshot is future")
     if state.get("snapshot_at")==latest:
-        return state,{"unchanged":True,"source_ref":ref,"latest_snapshot_at":latest}
+        return state,{"unchanged":True,"source_ref":ref,"latest_snapshot_at":latest,
+                      "source_stale":age>MAX_AGE}
+    # Initial archive recovery is allowed for migration, but never emits price alerts.
+    baseline_only=not state and age>MAX_AGE
+    if state and age>MAX_AGE:raise RuntimeError("New Realt snapshot is stale; price alerts blocked")
     if budget_reader:
         budget=budget_reader()
         if not budget.get("safe"):raise BudgetPause(budget)
@@ -115,7 +119,7 @@ def source(state, budget_reader=None):
         row["present_in_latest_snapshot"]=row["uuid"] in latest_ids
     result.update(snapshot_at=latest,schema=2)
     return result,{"unchanged":False,"source_ref":ref,"latest_snapshot_at":latest,
-                  "new_snapshots":len(snapshots),"checkpoint_key":KEY}
+                  "new_snapshots":len(snapshots),"checkpoint_key":KEY,"baseline_only":baseline_only}
 
 
 def save(db,state):

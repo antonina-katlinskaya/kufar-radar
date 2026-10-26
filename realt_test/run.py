@@ -137,6 +137,7 @@ def run():
     if not bir:
         raise RuntimeError('Bir snapshot is empty; audit aborted')
     result = audit(rows, bir, checked, source)
+    result["notification_paused"]=bool(source.get("baseline_only"))
     if checkpoint is not None:
         old_status=previous.get('last_status',{})
         for item in result['items']:

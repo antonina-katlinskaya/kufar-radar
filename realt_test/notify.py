@@ -140,6 +140,9 @@ def main():
     if str(owner) != OWNER_ID:
         raise RuntimeError('Owner state changed; no message sent')
     result = json.loads(Path('realt_test/results.json').read_text(encoding='utf-8'))
+    if result.get('notification_paused'):
+        print(json.dumps({'notification_sent':False,'reason':'Archive baseline restored; waiting for a fresh collector snapshot'}))
+        return
     if result.get('budget_paused') is not None:
         budget=result['budget_paused']
         day=result.get('checked_at','')[:10]
