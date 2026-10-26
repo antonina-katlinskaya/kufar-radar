@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen
 
 from realt_test.policy import created_in_window
+from realt_test.backdated import material_change
 
 REPOSITORY = "antonina-katlinskaya/realt-collector"
 TRACKED = {
@@ -59,8 +60,14 @@ def merge_snapshots(snapshots):
             if not key:
                 raise RuntimeError("Selected listing has no UUID")
             old = selected.get(key)
+            edits = list(old.get("material_edits", [])) if old else []
+            if old:
+                edit = material_change(old, row, observed_at)
+                if edit and (not edits or edits[-1] != edit):
+                    edits.append(edit)
             selected[key] = {**row, "person": who, "last_seen_at": observed_at,
-                             "first_seen_at": old["first_seen_at"] if old else observed_at}
+                             "first_seen_at": old["first_seen_at"] if old else observed_at,
+                             "material_edits": edits}
     return list(selected.values())
 
 
