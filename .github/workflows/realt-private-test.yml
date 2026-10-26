@@ -43,6 +43,8 @@ jobs:
           CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
           CF_HISTORY_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
         run: python -m realt_test.run
+      - name: Calculate pending reviews (dry run, no state writes)
+        run: python -m realt_test.check_pending
       - name: Publish Realt — тест only to verified private owner
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -60,5 +62,7 @@ jobs:
             realt_test/results.json
             realt_test/results.csv
             realt_test/results.md
+            realt_test/pending_reviews.json
+            realt_test/proposed_review_state.json
             realt_test/notification_receipt.json
           if-no-files-found: warn
