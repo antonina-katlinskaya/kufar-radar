@@ -69,8 +69,8 @@ class PolicyTests(unittest.TestCase):
 
     def test_unknown_currency_is_not_violation(self):
         result = audit([row(priceCurrency='BYN')], [bir()], '2026-10-26', {})
-        self.assertEqual(result['items'][0]['status'], 'REVIEW')
-        self.assertIn('не установлено', result['items'][0]['reason'])
+        self.assertEqual(result['items'][0]['status'], 'SKIP')
+        self.assertIn('не в евро', result['items'][0]['reason'])
 
     def test_nearby_area_is_only_hint(self):
         result = audit([row(areaTotal='46.2')], [bir()], '2026-10-26', {})
