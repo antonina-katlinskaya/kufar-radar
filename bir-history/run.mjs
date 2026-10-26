@@ -1,3 +1,4 @@
+import {writeFileSync} from 'node:fs';
 import {scan} from './worker.mjs';
 
 const {CF_ACCOUNT_ID, BIR_D1_DATABASE_ID, CF_D1_API_TOKEN} = process.env;
@@ -7,6 +8,10 @@ if (!CF_ACCOUNT_ID || !BIR_D1_DATABASE_ID || !CF_D1_API_TOKEN) {
 
 const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT_ID)}/d1/database/${encodeURIComponent(BIR_D1_DATABASE_ID)}/query`;
 
+let successfulCheckedAt = null;
+function exportMeta(checked_at) {
+  if (process.env.BIR_EXPORT_META_PATH) writeFileSync(process.env.BIR_EXPORT_META_PATH, JSON.stringify({ok:true,checked_at}));
+}
 async function query(statements) {
   const payload = statements.length === 1
     ? {sql: statements[0].sql, params: statements[0].params}
@@ -24,6 +29,10 @@ async function query(statements) {
   if (!body.success || !Array.isArray(body.result) || body.result.length !== statements.length ||
       body.result.some(result => result.success === false)) {
     throw Error(`D1 query failed: ${JSON.stringify(body.errors ?? body.result?.map(r => r.error ?? null))}`);
+  }
+  for (const statement of statements) {
+    if (statement.sql.startsWith('INSERT INTO bir_scans(') && statement.params?.[5] === 'ok')
+      successfulCheckedAt = statement.params[2];
   }
   return body.result;
 }
@@ -61,9 +70,11 @@ if (Number.isFinite(freshMinutes) && freshMinutes > 0) {
       checked_at:latest.checked_at,
       age_seconds:Math.round(ageMs / 1000)
     }));
+    exportMeta(latest.checked_at);
     process.exit(0);
   }
 }
 
 const result = await scan({BIR_DB: db});
 console.log(JSON.stringify(result));
+if (result.ok && successfulCheckedAt) exportMeta(successfulCheckedAt);

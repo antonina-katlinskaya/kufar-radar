@@ -1,14 +1,15 @@
 name: Realt scheduled owner-only
 on:
   schedule:
-    - cron: '40 6,9,12,15,18 * * *'
+    # Cheap GitHub-only freshness checks; full audit only once per new collector snapshot.
+    - cron: '8,18,28,38,48,58 4-18 * * *'
   push:
     branches: [main]
     paths:
       - '.github/workflows/realt-scheduled-owner.yml'
   workflow_dispatch: {}
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: realt-owner-scheduled-single
   cancel-in-progress: false
@@ -16,6 +17,9 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      REALT_CONTINUOUS: '1'
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,41 +28,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - name: Verify owner-only policy
+      - run: pip install httpx==0.28.1
+      - name: Verify owner-only policy and durable GitHub state
         run: python -m unittest discover -s realt_test -p 'test_*.py' -v
-      - name: Check Realt listings and current Bir
-        env:
-          REALT_CONTINUOUS: '1'
-          GITHUB_TOKEN: ${{ github.token }}
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
-          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
-          CF_HISTORY_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+      - name: Check Realt listings and exported fresh Bir
         run: python -m realt_test.run
       - name: Preview only new reviews
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
-          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
         run: python -m realt_test.check_pending
       - name: Deliver to verified personal chat only
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
-          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python -m realt_test.notify
+      - name: Report migration success or a paused check to owner
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          REALT_JOB_STATUS: ${{ job.status }}
+        run: python -m realt_test.health
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: realt-scheduled-audit
-          retention-days: 30
+          retention-days: 3
           path: |
             realt_test/results.json
-            realt_test/results.csv
-            realt_test/results.md
             realt_test/pending_reviews.json
             realt_test/notification_receipt.json
+            realt_test/health_receipt.json
           if-no-files-found: warn
