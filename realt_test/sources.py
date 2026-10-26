@@ -54,8 +54,8 @@ def load_realt():
     raw_base = f"https://raw.githubusercontent.com/{REPOSITORY}/{ref}/"
     paths = sorted(v["path"] for v in tree["tree"] if re.fullmatch(
         r"data/raw/2026-10-(23|24|25|26)_\d{2}-\d{2}_etazhi.json", v["path"]))
-    if not {f"2026-10-{d}" for d in range(23, 26)}.issubset({p[9:19] for p in paths}):\n        raise RuntimeError("Missing 23-25 October archive")\n    if False and {p[9:19] for p in paths} != {f"2026-10-{d}" for d in range(23, 26)}:
-        raise RuntimeError("Missing a day of the requested Realt archive")
+    if not {f"2026-10-{d}" for d in range(23, 26)}.issubset({p[9:19] for p in paths}):
+        raise RuntimeError("Missing 23-25 October archive")
     snapshots = []
     for path in paths:
         data = json.loads(fetch(raw_base + path))
