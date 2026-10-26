@@ -9,6 +9,7 @@ from realt_test.policy import created_in_window
 
 REPOSITORY = "antonina-katlinskaya/realt-collector"
 TRACKED = {
+    "cd9285f2-3506-4986-af06-7749b55924e7": "Алёна Довгун",
     "77ff7ab0-6e68-11ee-818e-0935d63487ea": "Ирина Барашенко",
     "53504f40-a386-11ec-beec-b72528b8f1cb": "Анастасия Биянова",
     "5f3a9050-b4b1-11f0-a915-7b17e0ec0a88": "Анна Зенкевич",
