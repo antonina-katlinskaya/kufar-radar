@@ -35,15 +35,20 @@ class Bot:
             raise RuntimeError(f'Telegram {method} failed; token and request URL suppressed') from None
 
 
-def publish(result, owner, bot, run_url):
+def publish(result, owner, bot, run_url, review_items=None):
     chat = bot.call('getChat', {'chat_id': OWNER_ID})
     target = validate_owner(owner, chat)
     if not result.get('items') or not result.get('bir_checked_at'):
         raise RuntimeError('Refusing to send an empty or unchecked report')
+    selected = review_items if review_items is not None else result['items']
     text = ['🧪 Realt — тест', '', 'Объявления, созданные 23–26 октября 2026 включительно.',
             f"Проверено: {result['checked']}. Совпали: {result['status_counts'].get('OK', 0)}. Требуют проверки: {result['status_counts'].get('REVIEW', 0)}.", '']
     for person, counts in result['person_status_counts'].items():
         text.append(f"{person}: {sum(counts.values())}; совпали {counts.get('OK', 0)}, проверить {counts.get('REVIEW', 0)}")
+    if review_items is not None:
+        text += ['', f'Новых или изменённых случаев для проверки: {len(selected)}.', '']
+        for item in selected:
+            text.append(f"• {item['person']}: {item['rooms']} комн., {item['area']} м², {item['price']} EUR — {item['url']}")
     text += ['', f"Снимок Bir: {result['bir_checked_at']}", '',
              'Сравниваются комнаты, точная площадь без округления и специальная стоимость при быстрой оплате. Этаж не входит в первичный фильтр.',
              '', result['coverage_warning'], '', 'Подробный отчёт и список объявлений приложены к этому сообщению.']
@@ -94,7 +99,8 @@ def main():
         print(json.dumps({'notification_sent': False, 'pending_reviews': 0, 'reason': 'No new or changed review cases'}))
         return
     run_url = f"https://github.com/{REPOSITORY}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    receipt = publish(result, owner, Bot(token), run_url)
+    delivery_result = {**result, 'items': unsent}
+    receipt = publish(delivery_result, owner, Bot(token), run_url, review_items=unsent)
     if receipt['notification_sent'] and len(receipt['documents_sent']) == 3:
         acknowledge(history_db, unsent)
     result['notification_sent'] = receipt['notification_sent']
