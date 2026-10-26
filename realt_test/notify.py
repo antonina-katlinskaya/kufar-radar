@@ -99,12 +99,17 @@ def main():
         print(json.dumps({'notification_sent': False, 'pending_reviews': 0, 'reason': 'No new or changed review cases'}))
         return
     run_url = f"https://github.com/{REPOSITORY}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    delivery_result = {**result, 'items': unsent}
+    from collections import Counter
+    from realt_test.run import write_reports
+    selected_counts = {person: dict(Counter(x['status'] for x in unsent if x['person'] == person))
+                       for person in result['tracked_people']}
+    delivery_result = {**result, 'items': unsent, 'checked': len(unsent),
+                       'status_counts': dict(Counter(x['status'] for x in unsent)),
+                       'person_status_counts': selected_counts}
+    write_reports(delivery_result)
     receipt = publish(delivery_result, owner, Bot(token), run_url, review_items=unsent)
     if receipt['notification_sent'] and len(receipt['documents_sent']) == 3:
         acknowledge(history_db, unsent)
-    result['notification_sent'] = receipt['notification_sent']
-    Path('realt_test/results.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(receipt))
 
 
