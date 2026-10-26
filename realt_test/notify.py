@@ -94,6 +94,9 @@ def main():
     from realt_test.history import pending, acknowledge
     history_db = D1()
     unsent, _ = pending(history_db, result)
+    replay = os.getenv('REALT_REPLAY_FORMAT_CARDS') == '1' and os.getenv('GITHUB_WORKFLOW') == 'Realt scheduled owner-only'
+    if replay:
+        unsent = [item for item in result['items'] if item.get('status') == 'REVIEW']
     if not unsent:
         print(json.dumps({'notification_sent': False, 'pending_reviews': 0, 'reason': 'No new or changed review cases'}))
         return
@@ -107,7 +110,7 @@ def main():
                        'person_status_counts': selected_counts}
     write_reports(delivery_result)
     receipt = publish(delivery_result, owner, Bot(token), run_url, review_items=unsent)
-    if receipt['delivered_items']:
+    if receipt['delivered_items'] and not replay:
         acknowledge(history_db, receipt['delivered_items'])
     print(json.dumps({k:v for k,v in receipt.items() if k!='delivered_items'}, ensure_ascii=False))
 
