@@ -35,3 +35,15 @@ class IncrementalTests(unittest.TestCase):
         first=advance({},[("2026-10-23T10:00:00Z",[row(50000)])])
         changed=advance(first,[("2026-10-24T10:00:00Z",[row(51000,"2026-10-24T09:00:00Z")])])
         self.assertEqual(changed["rows"]["x"]["material_edits"],[])
+
+    def test_checkpoint_compression_preserves_all_history_and_unicode(self):
+        from realt_test.incremental import save,load
+        class Memory:
+            def __init__(self):self.data={}
+            def get_state(self,key):return self.data.get(key)
+            def set_state(self,key,value):self.data[key]=value
+        db=Memory()
+        state=advance({},[("2026-10-23T10:00:00Z",[row(50000)])])
+        state['padding']='История без потери данных '*50000
+        save(db,state)
+        self.assertEqual(load(db),state)

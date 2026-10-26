@@ -1,5 +1,6 @@
 """Realt-only persisted observation checkpoint; no Kufar tables are modified."""
 import csv
+import base64
 import gzip
 import io
 import json
@@ -25,7 +26,7 @@ def checked_time(value):
 def load(db):
     value = db.get_state(KEY)
     if not value: return {}
-    state = json.loads(value)
+    state = json.loads(gzip.decompress(base64.b64decode(value[3:])) if value.startswith("gz:") else value)
     if state.get("schema") != 2 or not isinstance(state.get("rows"),dict):
         raise RuntimeError("Invalid Realt observation checkpoint")
     return state
@@ -123,6 +124,9 @@ def source(state, budget_reader=None):
 
 
 def save(db,state):
-    encoded=json.dumps(state,ensure_ascii=False,separators=(",",":"))
-    if len(encoded.encode())>700_000:raise RuntimeError("Realt checkpoint exceeds safe GitHub state budget")
+    raw=json.dumps(state,ensure_ascii=False,separators=(",",":")).encode()
+    if len(raw)>25_000_000:raise RuntimeError("Realt checkpoint requires partitioning (25 MB raw guard)")
+    encoded="gz:"+base64.b64encode(gzip.compress(raw,mtime=0)).decode()
+    if len(encoded)>750_000:raise RuntimeError("Realt checkpoint requires partitioning (750 KB compressed guard)")
     db.set_state(KEY,encoded)
+    print(json.dumps({"checkpoint_raw_bytes":len(raw),"checkpoint_stored_bytes":len(encoded),"checkpoint_listings":len(state.get("rows",{}))}))
