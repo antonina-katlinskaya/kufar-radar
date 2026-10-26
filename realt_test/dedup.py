@@ -24,7 +24,12 @@ def legacy_fingerprints(item):
         if number is not None:
             options.extend([str(value),format(number,'f'),format(number.normalize(),'f'),str(float(number))])
         choices.append(list({(type(v).__name__,str(v)):v for v in options}.values()))
-    return {_hash({**values,**dict(zip(NUMERIC,combination))}) for combination in product(*choices)}
+    candidates=[{**values,**dict(zip(NUMERIC,c))} for c in product(*choices)]
+    hashes={_hash(v) for v in candidates}
+    # The first deployed v1 hash predates the material_edits field entirely.
+    if not item.get('material_edits'):
+        hashes.update(_hash({k:v for k,v in candidate.items() if k!='material_edits'}) for candidate in candidates)
+    return hashes
 
 def fingerprint(item):
     values = {key: item.get(key) for key in

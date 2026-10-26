@@ -49,8 +49,9 @@ class MigrationDedupTests(unittest.TestCase):
         from realt_test.dedup import fingerprint,select_new_reviews
         item={'uuid':'x','person':'Name','rooms':3,'area':44.42,'price':60594,'currency':978,'status':'REVIEW','reason':'same','material_edits':[]}
         old={**item,'rooms':'3','area':'44.42','price':'60594.0','currency':'978'}
+        old.pop('material_edits')
         old_hash=hashlib.sha256(json.dumps(old,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-        self.assertEqual(fingerprint(item),fingerprint(old))
+        self.assertEqual(fingerprint(item),fingerprint({**old,'material_edits':[]}))
         self.assertEqual(select_new_reviews({'items':[item]},{'x':old_hash})[0],[])
         changed={**item,'price':60595}
         self.assertEqual(len(select_new_reviews({'items':[changed]},{'x':old_hash})[0]),1)
