@@ -35,6 +35,10 @@ def main():
     age=datetime.now(timezone.utc)-stamp
     if not meta.get('ok') or not timedelta(minutes=-5)<=age<=timedelta(minutes=35):
         raise RuntimeError('Original Bir scan is not fresh/successful')
+    file=GitHubFile('realt-bir-snapshot','realt_state/bir.json')
+    previous=file.read()
+    if previous.get('checked_at','')>=checked:
+        print(json.dumps({'export_skipped':'already exported','checked_at':checked}));return
     account=os.environ['CF_ACCOUNT_ID'];db=os.environ['BIR_D1_DATABASE_ID']
     req=Request(f'https://api.cloudflare.com/client/v4/accounts/{account}/d1/database/{db}/query',
                 data=json.dumps({'sql':SQL}).encode(),method='POST',headers={
@@ -45,11 +49,6 @@ def main():
         raise RuntimeError('Bir export query failed')
     block=result['result'][0]
     out=payload(block['results'],checked)
-    file=GitHubFile('realt-bir-snapshot','realt_state/bir.json')
-    previous=file.read()
-    if previous.get('checked_at', '')>=checked:
-        print(json.dumps({'export_skipped':'already exported','checked_at':checked}))
-        return
     file.write(out)
     print(json.dumps({'exported':len(out['items']),'checked_at':checked,
                       'd1_rows_read':block.get('meta',{}).get('rows_read'),
