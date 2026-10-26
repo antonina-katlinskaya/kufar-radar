@@ -106,14 +106,14 @@ class OwnerTests(unittest.TestCase):
                 os.chdir(tmp)
                 write_reports(result)
                 receipt = publish(result, OWNER_ID, bot, 'https://github.com/example/run')
-                self.assertTrue(receipt['pinned'])
-                self.assertEqual(len(receipt['documents_sent']), 3)
+                self.assertEqual(len(receipt['message_ids']), 1)
+                self.assertEqual(len(receipt['documents_sent']), 0)
                 self.assertTrue(Path('realt_test/notification_receipt.json').exists())
         finally:
             os.chdir(old)
         self.assertTrue(all(str(p['chat_id']) == OWNER_ID for _, p in bot.calls))
-        self.assertEqual([m for m, _ in bot.calls], ['getChat', 'sendMessage', 'pinChatMessage', 'sendDocument', 'sendDocument', 'sendDocument'])
-        self.assertNotIn('keyboard', bot.calls[1][1]['reply_markup'])
+        self.assertEqual([m for m, _ in bot.calls], ['getChat', 'sendMessage'])
+        self.assertIn('inline_keyboard', bot.calls[1][1]['reply_markup'])
 
     def test_delta_message_only_mentions_new_case(self):
         class FakeBot:
@@ -135,7 +135,7 @@ class OwnerTests(unittest.TestCase):
         finally:
             os.chdir(old)
         msg = next(payload['text'] for method, payload in bot.calls if method == 'sendMessage')
-        self.assertIn('111', msg)
+        self.assertIn('https://realt.by/sale-flats/object/111/', bot.calls[1][1]['reply_markup']['inline_keyboard'][0][0]['url'])
         self.assertNotIn('222', msg)
 
     def test_wrong_recipient_never_sends(self):
