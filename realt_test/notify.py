@@ -3,7 +3,8 @@ import json
 import os
 from pathlib import Path
 
-SISTER_ID = '1037292158'  # Verified active Kufar subscriber.\nOWNER_ID = '352252956'  # Existing authoritative telegram_chat_id, verified 2026-10-26.
+SISTER_ID = '1037292158'  # Verified active Kufar subscriber.
+OWNER_ID = '352252956'  # Existing authoritative telegram_chat_id, verified 2026-10-26.
 BRANCH = 'realt-private-test-20261026'
 REPOSITORY = 'antonina-katlinskaya/kufar-radar'
 
