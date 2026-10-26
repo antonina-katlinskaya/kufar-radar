@@ -790,7 +790,7 @@ def process_updates(db,tg):
                       reply_keyboard=MAIN_KEYBOARD
                     )
                 elif action=='start':
-                    tg.send(cid,'Этот радар закрытый. Для подключения нужна действующая пригласительная ссылка.')
+                    safe_send(tg,cid,'Этот радар закрытый. Для подключения нужна действующая пригласительная ссылка.')
                 continue
 
             if action=='start':
