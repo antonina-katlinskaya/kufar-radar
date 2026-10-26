@@ -36,22 +36,50 @@ class Bot:
 
 
 def format_card(item, bir_checked_at):
+    """Same visual hierarchy as Kufar cards; do not claim an unverified violation."""
     import html
-    esc=lambda v: html.escape(str(v if v is not None and v != '' else '—'))
-    options=item.get('bir_room_area_candidates') or []
-    heading='🟠 <b>ВЕРОЯТНО: НЕСОВПАДЕНИЕ С BIR</b>'
-    lines=[heading,'',f"👤 <b>{esc(item['person'])}</b>"]
-    if item.get('address'): lines.append(f"📍 {esc(item['address'])}")
-    lines += [f"🚪 {esc(item.get('rooms'))} комн. · {esc(item.get('area'))} м² · {esc(item.get('floor'))} этаж",
-              '',f"<b>Realt: {esc(item.get('price'))} {('€' if str(item.get('currency')) in ('978','EUR') else esc(item.get('currency')))}</b>"]
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    esc = lambda value: html.escape(str(value if value is not None and value != '' else '—'))
+    options = item.get('bir_room_area_candidates') or []
+    def number(value, digits=2):
+        try:
+            return f"{float(value):,.{digits}f}".replace(",", " ").replace(".", ",")
+        except (ValueError, TypeError):
+            return esc(value)
+    def date(value):
+        try:
+            dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            return dt.astimezone(ZoneInfo('Europe/Minsk')).strftime('%d.%m %H:%M') if dt.tzinfo else dt.strftime('%d.%m %H:%M')
+        except (ValueError, TypeError):
+            return None
+    price = number(item.get('price'), 0)
+    currency = '€' if str(item.get('currency')) in ('978','EUR') else esc(item.get('currency'))
+    lines = ['🟠 <b>ВЕРОЯТНО: НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ</b>',
+             '', f"👤 <b>{esc(item.get('person'))}</b>"]
+    if item.get('address'):
+        lines.append(f"📍 {esc(item['address'])}")
+    specifications = [f"{esc(item.get('rooms'))}-комн.", f"{number(item.get('area'))} м²"]
+    if item.get('floor') is not None and item.get('floor') != '':
+        specifications.append(f"{esc(item['floor'])} этаж")
+    lines += ['🚪 ' + ' · '.join(specifications), '',
+              f"<b>Realt: {price} {currency}</b>"]
     if options:
-        specials=sorted({str(x.get('special_price_eur')) for x in options if x.get('special_price_eur') is not None})
-        lines.append('<b>BIR, спеццена: '+esc(', '.join(specials) or '—')+' €</b>')
+        specials = sorted({number(x.get('special_price_eur'), 0) for x in options
+                           if x.get('special_price_eur') is not None})
+        lines.append(f"<b>BIR: {', '.join(specials) + ' €' if specials else 'спеццена не указана'}</b>")
+        lines.append('Нет объекта с одновременным совпадением комнат, точной площади и спеццены')
     else:
-        lines.append('<b>BIR: объект с теми же комнатами и точной площадью не найден</b>')
-    lines += ['',f"⚠️ {esc(item.get('reason'))}",'',f"🕒 BIR: {esc(bir_checked_at)}",
-              '<i>Предварительное расхождение; требуется проверка.</i>']
-    return '\\n'.join(lines)
+        lines.append('<b>BIR: нет объекта с совпадением комнат и точной площади</b>')
+    timestamps = []
+    if date(item.get('created_at')):
+        timestamps.append('Realt ' + date(item['created_at']))
+    if date(bir_checked_at):
+        timestamps.append('BIR ' + date(bir_checked_at))
+    if timestamps:
+        lines += ['', '🕒 ' + ' · '.join(timestamps)]
+    lines += ['', '<i>Предварительное расхождение, требуется проверка.</i>']
+    return '\n'.join(lines)
 
 
 def publish(result, owner, bot, run_url, review_items=None):
@@ -65,7 +93,8 @@ def publish(result, owner, bot, run_url, review_items=None):
     for item in selected:
         if item.get('status')!='REVIEW': continue
         url=item.get('url')
-        buttons=[[{'text':'Открыть Realt','url':url}]] if url and url.startswith('https://realt.by/') else []
+        buttons=[[{'text':'Открыть Realt','url':url},
+                  {'text':'Открыть BIR','url':'https://bir.by/search-by-parameters/'}]] if url and url.startswith('https://realt.by/') else []
         message=bot.call('sendMessage', {'chat_id':target,
             'text':format_card(item,result['bir_checked_at']),
             'parse_mode':'HTML','disable_web_page_preview':True,
