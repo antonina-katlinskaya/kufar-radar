@@ -1,5 +1,6 @@
 import unittest
 from realt_test.history import KEY, load, pending, acknowledge
+from realt_test.history import claim
 
 class Db:
     def __init__(self):
@@ -36,3 +37,15 @@ class HistoryTests(unittest.TestCase):
         db = Db()
         db.state[KEY] = "[]"
         with self.assertRaises(RuntimeError): load(db)
+    def test_backdated_delivery_is_acknowledged_without_repeating(self):
+        db = Db()
+        item = {**example(), "status": "BACKDATED", "material_edits": [{"changes": [{"field":"цена","before":51000,"after":52000}]}]}
+        acknowledge(db, [item])
+        self.assertEqual(pending(db, {"items":[item]})[0], [])
+    def test_uncertain_claim_never_retries_automatically(self):
+        db=Db();item=example()
+        claim(db,item)
+        self.assertEqual(pending(db,{"items":[item]})[0],[])
+        with self.assertRaises(RuntimeError):claim(db,item)
+        acknowledge(db,[item])
+        self.assertEqual(pending(db,{"items":[item]})[0],[])

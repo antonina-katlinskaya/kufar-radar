@@ -28,7 +28,7 @@ def select_new_reviews(result, acknowledged):
         uid = str(item.get("uuid") or "")
         if not uid:
             raise ValueError("Realt listing UUID is missing")
-        if item.get("status") not in ("REVIEW", "BACKDATED"):
+        if item.get("status") not in ("REVIEW", "BACKDATED", "RESOLVED"):
             continue
         value = fingerprint(item)
         if acknowledged.get(uid) != value:

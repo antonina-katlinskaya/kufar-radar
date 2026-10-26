@@ -23,6 +23,10 @@ def material_change(before, after, observed_at):
     """Mirror Kufar: core edit to an ad older than 24h, context fields secondary."""
     created = dt(after.get("createdAt")) or dt(before.get("createdAt"))
     observed = dt(observed_at)
+    previous_created = dt(before.get("createdAt"))
+    current_created = dt(after.get("createdAt"))
+    if not previous_created or not current_created or previous_created != current_created:
+        return None
     if not created or not observed or (observed - created).total_seconds() < 86400:
         return None
     core = [(label, before.get(key), after.get(key)) for key, label in CORE

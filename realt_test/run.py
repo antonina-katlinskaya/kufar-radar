@@ -102,13 +102,53 @@ def write_reports(result):
 
 
 def run():
-    from radar.d1 import D1
-    from radar.source_snapshot import load_bir_snapshot
-    rows, source = load_realt()
-    bir, checked = load_bir_snapshot(D1(os.getenv('CF_HISTORY_D1_DATABASE_ID')))
+    from realt_test.github_store import GitHubState
+    from realt_test.bir_snapshot import load as load_bir_snapshot
+    checkpoint=None;checkpoint_db=None
+    if os.getenv('REALT_CONTINUOUS') == '1':
+        from realt_test.incremental import load, source as incremental_source, BudgetPause
+        checkpoint_db=GitHubState()
+        previous=load(checkpoint_db)
+        try:
+            checkpoint,source=incremental_source(previous)
+        except BudgetPause as pause:
+            result={'items':[],'tracked_people':list(TRACKED.values()),'person_status_counts':{},
+                    'checked':0,'coverage_warning':str(pause),'bir_checked_at':'','status_counts':{},
+                    'source':{},'budget_paused':pause.budget,'checked_at':datetime.now(timezone.utc).isoformat()}
+            write_reports(result)
+            print(json.dumps({'budget_paused':pause.budget},ensure_ascii=False))
+            return
+        if source['unchanged']:
+            if previous.get('pending_result'):
+                write_reports(previous['pending_result'])
+            else:
+                write_reports({'items':[],'tracked_people':list(TRACKED.values()),'person_status_counts':{},
+                    'checked':0,'coverage_warning':'Этот снимок уже обработан','bir_checked_at':'',
+                    'status_counts':{},'source':source})
+            print(json.dumps({'source_unchanged':True,'new_snapshot_processed':False}))
+            return
+        rows=list(checkpoint['rows'].values())
+        from realt_test.policy import created_in_window
+        from realt_test.sources import created_since_baseline
+        rows=[r for r in rows if created_since_baseline(r.get('createdAt')) or r.get('material_edits')]
+    else:
+        rows, source = load_realt()
+    bir, checked = load_bir_snapshot()
     if not bir:
         raise RuntimeError('Bir snapshot is empty; audit aborted')
     result = audit(rows, bir, checked, source)
+    if checkpoint is not None:
+        old_status=previous.get('last_status',{})
+        for item in result['items']:
+            if item['status']=='OK' and old_status.get(item['uuid'])=='REVIEW' and item.get('present_in_latest_snapshot'):
+                item['status']='RESOLVED'
+                item['reason']='Предыдущее расхождение устранено: комнаты, точная площадь и спеццена совпали'
+        result['status_counts']=dict(Counter(x['status'] for x in result['items']))
+        result['person_status_counts']={p:dict(Counter(x['status'] for x in result['items'] if x['person']==p)) for p in TRACKED.values()}
+        checkpoint['last_status']={x['uuid']:x['status'] for x in result['items']}
+        checkpoint['pending_result']=result
+        from realt_test.incremental import save
+        save(checkpoint_db,checkpoint)
     write_reports(result)
     print(json.dumps({k: v for k, v in result.items() if k not in {'items', 'source'}}, ensure_ascii=False))
 
