@@ -1,4 +1,4 @@
-"""Read-only cross-source candidate evidence for two unresolved agents.
+"""Read-only cross-source candidate evidence for the retained profile.
 
 Matches area/rooms/price between separate platforms. These are clues,
 not proof of person identity. No notifications or state updates.
@@ -9,7 +9,7 @@ from decimal import Decimal
 from radar.d1 import D1
 from realt_test.sources import fetch, REPOSITORY
 
-PROFILES={"Алёна Довгун":"11093294","Наталья Сидорова":"9401805"}
+PROFILES={"Алёна Довгун":"11093294"}
 def number(x):
     try: return Decimal(str(x))
     except Exception: return None

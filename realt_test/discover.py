@@ -5,7 +5,7 @@ from urllib.request import urlopen
 from radar.d1 import D1
 from realt_test.sources import REPOSITORY, fetch
 
-NAMES=("Алёна Довгун","Ирина Барашенко","Хатковская","Анастасия Биянова","Анна Зенкевич","Жанна Вакуленчик","Дмитрий Спиридонов","Наталья Сидорова","Дарья Иванова","Ольга Михальченко")
+NAMES=("Алёна Довгун","Ирина Барашенко","Хатковская","Анастасия Биянова","Анна Зенкевич","Жанна Вакуленчик","Дмитрий Спиридонов","Дарья Иванова","Ольга Михальченко")
 def main():
     rows=list(csv.DictReader(io.StringIO(fetch(f"https://raw.githubusercontent.com/{REPOSITORY}/main/data/analytics/current_listings.csv").decode("utf-8-sig"))))
     users=defaultdict(lambda:{"names":set(),"emails":set(),"count":0})

@@ -3,6 +3,8 @@ import csv
 import base64
 import gzip
 import io
+import hashlib
+import zipfile
 import json
 import re
 from datetime import datetime, timezone, timedelta
@@ -110,6 +112,18 @@ def source(state, budget_reader=None):
         stamp=data["snapshot_at"]
         if previous_time and checked_time(stamp)<=checked_time(previous_time):continue
         snapshots.append((stamp,data["minsk_mir_objects"]))
+    if 'data/archive/index.json' in paths:
+        index=json.loads(fetch(base+'data/archive/index.json'))
+        if index.get('schema')!=1:raise RuntimeError('Unsupported release archive index')
+        for month in index.get('months',[]):
+            if previous_time and month<previous_time[:7]:continue
+            if month>latest[:7]:continue
+            entries=json.loads(fetch(base+'data/archive/'+month+'.json'))
+            for entry in entries.get('snapshots',[]):
+                when=entry['snapshot_at']
+                if checked_time(when)>checked_time(latest):continue
+                if previous_time and checked_time(when)<=checked_time(previous_time):continue
+                snapshots.extend(release_snapshot(entry))
     if not marker:
         snapshots.append((latest,current))
     if not snapshots or max(x[0] for x in snapshots)!=latest:
@@ -121,6 +135,31 @@ def source(state, budget_reader=None):
     result.update(snapshot_at=latest,schema=2)
     return result,{"unchanged":False,"source_ref":ref,"latest_snapshot_at":latest,
                   "new_snapshots":len(snapshots),"checkpoint_key":KEY,"baseline_only":baseline_only}
+
+
+def release_snapshot(entry,reader=None):
+    """Read immutable public Release data, validating packet and every member."""
+    url=entry.get('url','')
+    if not url.startswith('https://github.com/'+REPOSITORY+'/releases/download/'):
+        raise RuntimeError('Untrusted snapshot archive URL')
+    packet=(reader or fetch)(url)
+    if len(packet)!=entry['bytes'] or hashlib.sha256(packet).hexdigest()!=entry['sha256']:
+        raise RuntimeError('Release snapshot checksum mismatch')
+    out=[]
+    with zipfile.ZipFile(io.BytesIO(packet)) as z:
+        if z.testzip():raise RuntimeError('Release snapshot CRC check failed')
+        manifest=json.loads(z.read('manifest.json'))
+        if manifest['snapshot_at']!=entry['snapshot_at']:raise RuntimeError('Release snapshot time mismatch')
+        for member,digest in manifest['sha256'].items():
+            if hashlib.sha256(z.read(member)).hexdigest()!=digest:raise RuntimeError('Release member checksum mismatch')
+        if manifest['raw_members']!=entry['raw_members']:raise RuntimeError('Release RAW membership mismatch')
+        for member in manifest['raw_members']:
+            data=json.loads(gzip.decompress(z.read(member)))
+            if data['snapshot_at']!=entry['snapshot_at']:raise RuntimeError('Release RAW time mismatch')
+            rows=data['minsk_mir_objects']
+            if len(rows)!=entry['rows']:raise RuntimeError('Release RAW count mismatch')
+            out.append((data['snapshot_at'],rows))
+    return out
 
 
 def save(db,state):
