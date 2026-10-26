@@ -115,6 +115,29 @@ class OwnerTests(unittest.TestCase):
         self.assertEqual([m for m, _ in bot.calls], ['getChat', 'sendMessage', 'pinChatMessage', 'sendDocument', 'sendDocument', 'sendDocument'])
         self.assertNotIn('keyboard', bot.calls[1][1]['reply_markup'])
 
+    def test_delta_message_only_mentions_new_case(self):
+        class FakeBot:
+            def __init__(self): self.calls = []
+            def call(self, method, payload, files=None):
+                self.calls.append((method, payload))
+                if method == 'getChat': return {'id': int(OWNER_ID), 'type': 'private'}
+                if method == 'sendMessage': return {'message_id': 202}
+                return True
+        bot = FakeBot()
+        r = audit([row(uuid='ad1', code=111), row(uuid='ad2', code=222)], [bir()], '2026-10-26', {})
+        selected = [{**r['items'][0], 'status': 'REVIEW', 'reason': 'Manual review'}]
+        old = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.chdir(tmp)
+                write_reports({**r, 'items': selected})
+                publish(r, OWNER_ID, bot, 'https://github.com/example/run', review_items=selected)
+        finally:
+            os.chdir(old)
+        msg = next(payload['text'] for method, payload in bot.calls if method == 'sendMessage')
+        self.assertIn('111', msg)
+        self.assertNotIn('222', msg)
+
     def test_wrong_recipient_never_sends(self):
         class FakeBot:
             calls = []
