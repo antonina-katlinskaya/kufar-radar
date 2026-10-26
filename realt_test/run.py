@@ -35,6 +35,10 @@ def audit(rows, bir, bir_checked, source):
             status, reason = 'REVIEW', 'Комнаты и точная площадь найдены, но специальная стоимость Bir отличается'
         else:
             status, reason = 'REVIEW', 'Нет сочетания комнат и точной площади в текущем наличии Bir'
+        edits = row.get('material_edits') or []
+        if edits and status != 'SKIP':
+            status = 'BACKDATED'
+            reason = 'Существенные параметры старого объявления изменены без новой даты публикации'
         same_rooms = [b for b in bir if rooms is not None and decimal_value(b.rooms) == rooms and decimal_value(b.area) is not None]
         nearest = sorted(same_rooms, key=lambda b: (abs(decimal_value(b.area) - area), str(b.object_key)))[:3] if area is not None and not candidates else []
         items.append({
@@ -46,7 +50,7 @@ def audit(rows, bir, bir_checked, source):
             'rooms': row.get('rooms'), 'area': row.get('areaTotal'), 'floor': row.get('storey'),
             'address': row.get('address'), 'street': row.get('streetName'), 'house_number': row.get('houseNumber'), 'quarter': row.get('quarter'), 'title': row.get('title'),
             'price': row.get('price'), 'currency': row.get('priceCurrency'),
-            'status': status, 'reason': reason,
+            'status': status, 'reason': reason, 'material_edits': edits,
             'matching_bir_keys': [b.object_key for b in exact],
             'bir_room_area_candidates': [candidate_record(b) for b in candidates],
             'nearest_area_hints_not_matches': [candidate_record(b) for b in nearest],
