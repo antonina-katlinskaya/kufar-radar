@@ -38,6 +38,30 @@ KUFAR_PROFILES=(
       'contact_person':'Жанна Вакуленчик',
       'audit_today_on_baseline':True,
     },
+    {
+      'id':'11079371',
+      'label':'Дмитрий Спиридонов',
+      'contact_person':'Дмитрий Спиридонов',
+      'audit_today_on_baseline':False,
+    },
+    {
+      'id':'9401805',
+      'label':'Наталья Сидорова',
+      'contact_person':'Наталья Сидорова',
+      'audit_today_on_baseline':False,
+    },
+    {
+      'id':'8333991',
+      'label':'Дарья Иванова',
+      'contact_person':'Дарья Иванова',
+      'audit_today_on_baseline':False,
+    },
+    {
+      'id':'9408059',
+      'label':'Ольга Михальченко',
+      'contact_person':'Ольга Михальченко',
+      'audit_today_on_baseline':False,
+    },
 )
 
 @dataclass(frozen=True)
