@@ -160,6 +160,18 @@ def main():
     owner = GitHubState().get_state('realt_owner_id')
     if str(owner) != OWNER_ID:
         raise RuntimeError('Owner state changed; no message sent')
+    if os.getenv('REALT_ACTIVATE_TWO') == '1':
+        db=GitHubState()
+        bot=Bot(token)
+        ids=[]
+        for recipient in (OWNER_ID,SISTER_ID):
+            chat=bot.call('getChat',{'chat_id':recipient})
+            if recipient==OWNER_ID:validate_owner(owner,chat)
+            else:validate_sister(recipient,chat)
+            message=bot.call('sendMessage',{'chat_id':recipient,
+                'text':'🔔 Realt Radar подключён. Теперь уведомления о новых расхождениях с Bir и существенных изменениях объявлений задним числом будут приходить сюда автоматически. Старые уже отправленные случаи повторяться не будут.'})
+            ids.append(message['message_id'])
+        print(json.dumps({'activated_both':True,'message_ids':ids,'recipients_verified':2}))
     result = json.loads(Path('realt_test/results.json').read_text(encoding='utf-8'))
     if result.get('notification_paused'):
         print(json.dumps({'notification_sent':False,'reason':'Archive baseline restored; waiting for a fresh collector snapshot'}))
