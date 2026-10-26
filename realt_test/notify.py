@@ -54,11 +54,15 @@ def format_card(item, bir_checked_at):
         except (ValueError, TypeError):
             return None
     price = number(item.get('price'), 0)
-    currency = '€' if str(item.get('currency')) in ('978','EUR') else esc(item.get('currency'))
+    currency = {'978':'€','EUR':'€','933':'BYN','BYN':'BYN'}.get(str(item.get('currency')), 'валюта неизвестна')
     lines = ['🟠 <b>ВЕРОЯТНО: НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ</b>',
              '', f"👤 <b>{esc(item.get('person'))}</b>"]
-    if item.get('address'):
-        lines.append(f"📍 {esc(item['address'])}")
+    if item.get('quarter'):
+        lines.append(f"🏢 {esc(item['quarter'])}")
+    address = str(item.get('address') or '')
+    house = str(item.get('house_number') or '').strip()
+    if house and house not in address.split(): address = (address + ' ' + house).strip()
+    if address: lines.append(f"📍 {esc(address)}")
     specifications = [f"{esc(item.get('rooms'))}-комн.", f"{number(item.get('area'))} м²"]
     if item.get('floor') is not None and item.get('floor') != '':
         specifications.append(f"{esc(item['floor'])} этаж")
@@ -74,6 +78,8 @@ def format_card(item, bir_checked_at):
     timestamps = []
     if date(item.get('created_at')):
         timestamps.append('Realt ' + date(item['created_at']))
+    if date(item.get('radar_checked_at')):
+        timestamps.append('радар ' + date(item['radar_checked_at']))
     if date(bir_checked_at):
         timestamps.append('BIR ' + date(bir_checked_at))
     if timestamps:
