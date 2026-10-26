@@ -93,8 +93,8 @@ def publish(result, owner, bot, run_url, review_items=None):
     for item in selected:
         if item.get('status')!='REVIEW': continue
         url=item.get('url')
-        buttons=[[{'text':'Открыть Realt','url':url},
-                  {'text':'Открыть BIR','url':'https://bir.by/search-by-parameters/'}]] if url and url.startswith('https://realt.by/') else []
+        buttons=[[{'text':'Открыть Realt','url':url,'style':'primary'},
+                  {'text':'Открыть BIR','url':'https://bir.by/search-by-parameters/','style':'success'}]] if url and url.startswith('https://realt.by/') else []
         message=bot.call('sendMessage', {'chat_id':target,
             'text':format_card(item,result['bir_checked_at']),
             'parse_mode':'HTML','disable_web_page_preview':True,
