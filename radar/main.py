@@ -476,6 +476,11 @@ def fmt_event_group(db,events,k):
         if not e: continue
         parts.append('')
         parts += comparison_lines(e,include_label=len(fields)>1)
+        if field=='existence':
+            if k.price_eur is not None:
+                parts.append(f'**Цена Kufar: {fmt_eur(k.price_eur)}**')
+            elif k.price_byn is not None:
+                parts.append(f'**Цена Kufar: {k.price_byn} BYN**')
 
     kufar_time=fmt_short_dt_minsk((k.raw or {}).get('list_time'))
     detected_time=fmt_short_dt_minsk(first.get('occurred_at'))
