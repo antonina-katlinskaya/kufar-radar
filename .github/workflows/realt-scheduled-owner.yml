@@ -1,7 +1,7 @@
 name: Realt scheduled owner-only
 on:
   schedule:
-    - cron: '17 9 * * *'
+    - cron: '40 6,9,12,15,18 * * *'
   push:
     branches: [main]
     paths:
