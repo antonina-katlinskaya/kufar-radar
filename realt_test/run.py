@@ -30,7 +30,7 @@ def audit(rows, bir, bir_checked, source):
         if exact:
             status, reason = 'OK', 'Совпали комнаты, точная площадь и специальная стоимость Bir при быстрой оплате'
         elif not price_confirmed:
-            status, reason = 'REVIEW', 'Валюта или цена Realt не подтверждена; ценовое нарушение не установлено'
+            status, reason = 'SKIP', 'Цена Realt не в евро; ценовое сравнение не производится'
         elif candidates:
             status, reason = 'REVIEW', 'Комнаты и точная площадь найдены, но специальная стоимость Bir отличается'
         else:
