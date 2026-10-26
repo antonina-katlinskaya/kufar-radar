@@ -30,7 +30,11 @@ EMAILS = {
 
 
 def fetch(url):
-    with urlopen(Request(url, headers={"User-Agent": "Realt-private-audit"}), timeout=60) as response:
+    headers={"User-Agent": "Realt-private-audit"}
+    token=os.getenv("GITHUB_TOKEN")
+    if token and url.startswith("https://api.github.com/"):
+        headers["Authorization"]="Bearer "+token
+    with urlopen(Request(url, headers=headers), timeout=60) as response:
         return response.read()
 
 
