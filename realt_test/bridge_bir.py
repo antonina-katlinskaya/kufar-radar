@@ -20,10 +20,10 @@ def success_record(log, start, end):
     for line in log.splitlines():
         try:
             time,body=line.split(' ',1)
-            if not stamp(start)<=stamp(time)<=stamp(end):continue
+            if not stamp(start)<=stamp(time)<stamp(end)+timedelta(seconds=1):continue
             value=json.loads(body.strip())
         except (ValueError,TypeError):continue
-        if isinstance(value,dict) and value.get('ok') is True and (value.get('scanId') or value.get('checked_at')):
+        if isinstance(value,dict) and value.get('ok') is True and ((value.get('scanId') and 'sourceCount' in value) or (value.get('checked_at') and value.get('reason')=='fresh_snapshot')):
             records.append(value)
     if not records:raise RuntimeError('No successful Bir record in verified refresh step')
     return records[-1]
