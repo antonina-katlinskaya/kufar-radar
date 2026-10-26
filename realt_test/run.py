@@ -1,100 +1,112 @@
-"""Read-only historical Realt x BIR test for October 22-25, 2026.
-
-No Telegram integration: produces an Actions artifact only. This is a deliberate
-guard against accidentally notifying the Kufar subscribers.
-"""
+"""Isolated archive audit. Production modules and source state are read-only."""
 import csv
-import io
 import json
 import os
 from collections import Counter
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
-from urllib.request import urlopen
+from datetime import datetime, timezone
+from pathlib import Path
 
-from radar.d1 import D1
-from radar.source_snapshot import load_bir_snapshot
-from realt_test.policy import created_in_window, area_equal
+from realt_test.policy import area_equal, decimal_value
+from realt_test.sources import TRACKED, load_realt
 
-SNAPSHOTS = "https://raw.githubusercontent.com/antonina-katlinskaya/realt-collector/main/data/analytics/current_listings.csv"
-OUT = "realt_test/results.json"
-# Confirmed by matching email contact and name in the collected Realt data.
-TRACKED = {
-    "i.s.barashenko@minsk.etagi.com": "Ирина Барашенко",
-    "a.v.biyanova@minsk.etagi.com": "Анастасия Биянова",
-    "a.p.zenkevich@minsk.etagi.com": "Анна Зенкевич",
-    "zh.a.vakulenchik@minsk.etagi.com": "Жанна Вакуленчик",
-}
+OUT = Path('realt_test/results.json')
 
 
-def dec(value):
-    try:
-        return Decimal(str(value).replace(",", "."))
-    except (InvalidOperation, ValueError, TypeError):
-        return None
+def candidate_record(b):
+    return {
+        'id': b.object_key, 'house': b.building_name, 'unit': b.unit_no,
+        'rooms': b.rooms, 'area': b.area, 'floor': b.floor,
+        'special_price_eur': b.price_fast_eur, 'regular_price_eur': b.price_regular_eur,
+    }
 
 
-def parse_ts(value):
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
+def audit(rows, bir, bir_checked, source):
+    items = []
+    for row in rows:
+        rooms, area, price = [decimal_value(row.get(k)) for k in ('rooms', 'areaTotal', 'price')]
+        candidates = [b for b in bir if rooms is not None and decimal_value(b.rooms) == rooms and area_equal(area, b.area)]
+        price_confirmed = str(row.get('priceCurrency')) in {'978', 'EUR'} and price is not None
+        exact = [b for b in candidates if price_confirmed and decimal_value(b.price_fast_eur) == price]
+        if exact:
+            status, reason = 'OK', 'Совпали комнаты, точная площадь и специальная стоимость Bir при быстрой оплате'
+        elif not price_confirmed:
+            status, reason = 'REVIEW', 'Валюта или цена Realt не подтверждена; ценовое нарушение не установлено'
+        elif candidates:
+            status, reason = 'REVIEW', 'Комнаты и точная площадь найдены, но специальная стоимость Bir отличается'
+        else:
+            status, reason = 'REVIEW', 'Нет сочетания комнат и точной площади в текущем наличии Bir'
+        same_rooms = [b for b in bir if rooms is not None and decimal_value(b.rooms) == rooms and decimal_value(b.area) is not None]
+        nearest = sorted(same_rooms, key=lambda b: (abs(decimal_value(b.area) - area), str(b.object_key)))[:3] if area is not None and not candidates else []
+        items.append({
+            'code': str(row.get('code') or ''), 'uuid': row['uuid'], 'person': row['person'],
+            'url': f"https://realt.by/sale-flats/object/{row['code']}/",
+            'created_at': row.get('createdAt'), 'updated_at': row.get('updatedAt'),
+            'first_seen_at': row.get('first_seen_at'), 'last_seen_at': row.get('last_seen_at'),
+            'present_in_latest_snapshot': row.get('present_in_latest_snapshot'),
+            'rooms': row.get('rooms'), 'area': row.get('areaTotal'), 'floor': row.get('storey'),
+            'address': row.get('address'), 'title': row.get('title'),
+            'price': row.get('price'), 'currency': row.get('priceCurrency'),
+            'status': status, 'reason': reason,
+            'matching_bir_keys': [b.object_key for b in exact],
+            'bir_room_area_candidates': [candidate_record(b) for b in candidates],
+            'nearest_area_hints_not_matches': [candidate_record(b) for b in nearest],
+        })
+    counts = {p: dict(Counter(x['status'] for x in items if x['person'] == p)) for p in TRACKED.values()}
+    return {
+        'scope': '2026-10-22..2026-10-25', 'checked_at': datetime.now(timezone.utc).isoformat(),
+        'bir_checked_at': bir_checked, 'bir_objects': len(bir), 'source': source,
+        'checked': len(items), 'status_counts': dict(Counter(x['status'] for x in items)),
+        'person_status_counts': counts, 'tracked_people': list(TRACKED.values()),
+        'coverage_warning': 'Объединены доступные архивные снимки и последний список. Объявления между обходами могли не попасть в архив. Сверка с наличием Bir на момент проверки, не на дату публикации. REVIEW не является доказанным нарушением. Этаж и адрес не входят в первичный фильтр.',
+        'notification_sent': False, 'items': items,
+    }
+
+
+def write_reports(result):
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    fields = ['person', 'code', 'created_at', 'area', 'rooms', 'price', 'currency', 'status', 'reason', 'address', 'floor', 'url', 'present_in_latest_snapshot', 'first_seen_at', 'last_seen_at']
+    with OUT.with_suffix('.csv').open('w', encoding='utf-8-sig', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(result['items'])
+    lines = ['# Realt — тест', '', 'Объявления 22–25 октября 2026 включительно.', '',
+             f"Проверено: {result['checked']}. Bir: {result['bir_checked_at']}.", '', result['coverage_warning'], '',
+             '| Сотрудник | Всего | Совпали | Проверить |', '|---|---:|---:|---:|']
+    for person, counts in result['person_status_counts'].items():
+        lines.append(f"| {person} | {sum(counts.values())} | {counts.get('OK', 0)} | {counts.get('REVIEW', 0)} |")
+    lines += ['', '## Требуют проверки', '']
+    for item in result['items']:
+        if item['status'] != 'REVIEW':
+            continue
+        lines += [f"### {item['person']} · [{item['code']}]({item['url']})", '',
+                  f"{item['rooms']} комн. · {item['area']} м² · {item['price']} (валюта {item['currency']}). {item['address']}", '', item['reason'], '']
+        candidates = item['bir_room_area_candidates']
+        if candidates:
+            lines.append('Bir, точные комнаты и площадь: ' + '; '.join(
+                f"{b['house']}, кв. {b['unit']}, {b['area']} м², спеццена {b['special_price_eur']} EUR, ID {b['id']}" for b in candidates))
+        else:
+            lines.append('Ближайшие площади — только подсказки, не соответствия: ' + '; '.join(
+                f"{b['house']}, {b['area']} м², спеццена {b['special_price_eur']} EUR" for b in item['nearest_area_hints_not_matches']))
+        lines.append('')
+    OUT.with_suffix('.md').write_text('\n'.join(lines), encoding='utf-8')
+    summary = os.getenv('GITHUB_STEP_SUMMARY')
+    if summary:
+        with open(summary, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
 
 
 def run():
-    # The snapshot is fetched read-only, collector queries and cadence unchanged.
-    with urlopen(SNAPSHOTS, timeout=60) as response:
-        rows = list(csv.DictReader(io.StringIO(response.read().decode("utf-8-sig"))))
-    db = D1(os.getenv("CF_HISTORY_D1_DATABASE_ID"))
-    bir, bir_checked = load_bir_snapshot(db)
-    selected = []
-    for row in rows:
-        who = TRACKED.get(str(row.get("contactEmail") or "").strip().lower())
-        if who and created_in_window(row.get("createdAt")):
-            selected.append((row, who))
-    items = []
-    for row, who in selected:
-        rooms = dec(row.get("rooms"))
-        area = dec(row.get("areaTotal"))
-        price = dec(row.get("price"))
-        candidates = [b for b in bir if rooms is not None and dec(b.rooms) == rooms and area_equal(area, b.area)]
-        price_confirmed = (
-            str(row.get("priceCurrency")) in {"978", "EUR"}
-            and price is not None
-        )
-        exact = next((b for b in candidates if price_confirmed and dec(b.price_fast_eur) == price), None)
-        if exact:
-            status = "OK"
-            reason = "Совпали комнаты, площадь (точно до 0,01) и спеццена BIR"
-        elif not price_confirmed:
-            status = "REVIEW"
-            reason = "Валюта Realt не подтверждена как EUR, ценовое нарушение не выставляется"
-        else:
-            status = "REVIEW"
-            reason = "Нет полного совпадения; требуется проверка возможной неоднозначности"
-        items.append({
-            "code": row.get("code"), "uuid": row.get("uuid"), "person": who,
-            "created_at": row.get("createdAt"), "updated_at": row.get("updatedAt"),
-            "rooms": row.get("rooms"), "area": row.get("areaTotal"),
-            "price": row.get("price"), "currency": row.get("priceCurrency"),
-            "status": status, "reason": reason,
-            "matching_bir_key": exact.object_key if exact else None,
-            "bir_room_area_candidates": len(candidates),
-        })
-    output = {
-        "scope": "2026-10-22..2026-10-25", "bir_checked_at": bir_checked,
-        "realt_source": SNAPSHOTS, "source_rows": len(rows),
-        "checked": len(items), "status_counts": dict(Counter(v["status"] for v in items)),
-        "coverage_warning": "Four confirmed contact emails are included. Source is a current-listings snapshot, not a complete historical archive; deleted listings from 22–25 October may be absent. REVIEW is not a confirmed violation.",
-        "tracked_people": sorted(TRACKED.values()),
-        "person_counts": dict(Counter(v["person"] for v in items)),
-        "notification_sent": False, "items": items,
-    }
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    with open(OUT, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
-    print(json.dumps({k: v for k, v in output.items() if k != "items"}, ensure_ascii=False))
+    from radar.d1 import D1
+    from radar.source_snapshot import load_bir_snapshot
+    rows, source = load_realt()
+    bir, checked = load_bir_snapshot(D1(os.getenv('CF_HISTORY_D1_DATABASE_ID')))
+    if not bir:
+        raise RuntimeError('Bir snapshot is empty; audit aborted')
+    result = audit(rows, bir, checked, source)
+    write_reports(result)
+    print(json.dumps({k: v for k, v in result.items() if k not in {'items', 'source'}}, ensure_ascii=False))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     run()

@@ -27,7 +27,8 @@ def decimal_value(value):
     if value is None or value == "":
         return None
     try:
-        return Decimal(str(value).replace(",", "."))
+        number = Decimal(str(value).replace(",", "."))
+        return number if number.is_finite() else None
     except (ValueError, InvalidOperation):
         return None
 
