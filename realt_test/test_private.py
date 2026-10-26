@@ -52,7 +52,9 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(merged['ad2']['last_seen_at'], snapshots[0][0])
 
     def test_unverified_people_excluded(self):
-        self.assertEqual(merge_snapshots([('2026-10-25', [row(userUuid='unknown'), row(createdAt='2026-10-27')])]), [])
+        from unittest.mock import patch
+        with patch.dict(os.environ, {'REALT_CONTINUOUS':'0'}):
+            self.assertEqual(merge_snapshots([('2026-10-25', [row(userUuid='unknown'), row(createdAt='2026-10-27')])]), [])
 
     def test_conflicting_identity_aborts(self):
         with self.assertRaises(RuntimeError):
