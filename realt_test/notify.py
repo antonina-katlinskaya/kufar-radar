@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-OWNER_ID = '352252956'  # Existing authoritative telegram_chat_id, verified 2026-10-26.
+SISTER_ID = '1037292158'  # Verified active Kufar subscriber.\nOWNER_ID = '352252956'  # Existing authoritative telegram_chat_id, verified 2026-10-26.
 BRANCH = 'realt-private-test-20261026'
 REPOSITORY = 'antonina-katlinskaya/kufar-radar'
 
@@ -33,6 +33,12 @@ class Bot:
         except Exception:
             # httpx exceptions can contain the bot token in their request URL.
             raise RuntimeError(f'Telegram {method} failed; token and request URL suppressed') from None
+
+
+def validate_sister(recipient,chat):
+    if str(recipient)!=SISTER_ID or str(chat.get('id'))!=SISTER_ID or chat.get('type')!='private':
+        raise RuntimeError('Sister recipient verification failed')
+    return SISTER_ID
 
 
 def format_card(item, bir_checked_at):
@@ -96,9 +102,10 @@ def format_card(item, bir_checked_at):
     return '\n'.join(lines)
 
 
-def publish(result, owner, bot, run_url, review_items=None, before_send=None, after_send=None):
-    chat=bot.call('getChat', {'chat_id': OWNER_ID})
-    target=validate_owner(owner,chat)
+def publish(result, owner, bot, run_url, review_items=None, before_send=None, after_send=None, recipient=None):
+    recipient=recipient or OWNER_ID
+    chat=bot.call('getChat', {'chat_id': recipient})
+    target=validate_owner(owner,chat) if recipient==OWNER_ID else validate_sister(recipient,chat)
     selected=review_items if review_items is not None else result.get('items',[])
     if not selected or not result.get('bir_checked_at'):
         raise RuntimeError('Refusing to send an empty or unchecked report')
@@ -125,6 +132,19 @@ def publish(result, owner, bot, run_url, review_items=None, before_send=None, af
         Path('realt_test/notification_receipt.json').write_text(
             json.dumps({k:v for k,v in receipt.items() if k!='delivered_items'},ensure_ascii=False,indent=2),encoding='utf-8')
     return receipt
+
+
+class SisterHistory:
+    from realt_test.history import KEY, CLAIMS_KEY
+    KEYS={KEY:'realt_sister_review_fingerprints_v1', CLAIMS_KEY:'realt_sister_delivery_claims_v1'}
+    def __init__(self,store):
+        self.store=store
+        if store.get_state(self.KEYS[self.KEY]) is None:
+            store.set_state(self.KEYS[self.KEY],store.get_state(self.KEY) or '{}')
+    def get_state(self,key,default=None):
+        return self.store.get_state(self.KEYS.get(key,key),default)
+    def set_state(self,key,value):
+        return self.store.set_state(self.KEYS.get(key,key),value)
 
 
 def main():
@@ -160,32 +180,29 @@ def main():
             Path('realt_test/notification_receipt.json').write_text(json.dumps({'notification_sent':True,'type':'budget_pause','owner_verified':True,'message_ids':[sent['message_id']]},indent=2))
         return
     from realt_test.history import pending, acknowledge, claim
-    history_db = GitHubState()
-    unsent, _ = pending(history_db, result)
-    replay = os.getenv('REALT_REPLAY_FORMAT_CARDS') == '1' and os.getenv('GITHUB_WORKFLOW') == 'Realt scheduled owner-only'
-    if replay:
-        unsent = [item for item in result['items'] if item.get('status') in ('REVIEW', 'BACKDATED')]
-    if not unsent:
-        print(json.dumps({'notification_sent': False, 'pending_reviews': 0, 'reason': 'No new or changed review cases'}))
+    owner_store=GitHubState()
+    sister_store=SisterHistory(owner_store)
+    cases=[]
+    for label,recipient,store in [('owner',OWNER_ID,owner_store),('sister',SISTER_ID,sister_store)]:
+        unsent,_=pending(store,result)
+        if unsent:cases.append((label,recipient,store,unsent))
+    if not cases:
+        print(json.dumps({'notification_sent':False,'reason':'No new cases for either recipient'}))
         return
     from datetime import datetime,timezone,timedelta
     stamp=datetime.fromisoformat(str(result.get('bir_checked_at') or '').replace('Z','+00:00'))
     age=datetime.now(timezone.utc)-stamp
     if age<timedelta(minutes=-5) or age>timedelta(minutes=35):
-        raise RuntimeError('Bir result became stale before delivery; nothing sent')
-    run_url = f"https://github.com/{REPOSITORY}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    from collections import Counter
-    from realt_test.run import write_reports
-    selected_counts = {person: dict(Counter(x['status'] for x in unsent if x['person'] == person))
-                       for person in result['tracked_people']}
-    delivery_result = {**result, 'items': unsent, 'checked': len(unsent),
-                       'status_counts': dict(Counter(x['status'] for x in unsent)),
-                       'person_status_counts': selected_counts}
-    write_reports(delivery_result)
-    receipt = publish(delivery_result, owner, Bot(token), run_url, review_items=unsent,
-                      before_send=(lambda item: claim(history_db,item)) if not replay else None,
-                      after_send=(lambda item: acknowledge(history_db,[item])) if not replay else None)
-    print(json.dumps({k:v for k,v in receipt.items() if k!='delivered_items'}, ensure_ascii=False))
+        raise RuntimeError('Bir snapshot stale; no messages sent')
+    run_url=f"https://github.com/{REPOSITORY}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    bot=Bot(token)
+    receipts={}
+    for label,recipient,store,items in cases:
+        receipt=publish(result,owner,bot,run_url,review_items=items,recipient=recipient,
+            before_send=lambda item,db=store:claim(db,item),
+            after_send=lambda item,db=store:acknowledge(db,[item]))
+        receipts[label]={k:v for k,v in receipt.items() if k!='delivered_items'}
+    print(json.dumps(receipts,ensure_ascii=False))
 
 
 if __name__ == '__main__':
