@@ -9,7 +9,7 @@ import json
 
 def fingerprint(item):
     values = {key: item.get(key) for key in
-              ("uuid", "person", "rooms", "area", "price", "currency", "status", "reason")}
+              ("uuid", "person", "rooms", "area", "price", "currency", "status", "reason", "material_edits")}
     return hashlib.sha256(json.dumps(values, ensure_ascii=False, sort_keys=True,
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
@@ -28,7 +28,7 @@ def select_new_reviews(result, acknowledged):
         uid = str(item.get("uuid") or "")
         if not uid:
             raise ValueError("Realt listing UUID is missing")
-        if item.get("status") != "REVIEW":
+        if item.get("status") not in ("REVIEW", "BACKDATED"):
             continue
         value = fingerprint(item)
         if acknowledged.get(uid) != value:
