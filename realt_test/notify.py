@@ -55,7 +55,7 @@ def format_card(item, bir_checked_at):
             return None
     price = number(item.get('price'), 0)
     currency = {'978':'€','EUR':'€','933':'BYN','BYN':'BYN'}.get(str(item.get('currency')), 'валюта неизвестна')
-    lines = ['🟠 <b>ВЕРОЯТНО: НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ</b>',
+    lines = ['⚠️ <b>ЗАДНИМ ЧИСЛОМ ИЗМЕНЕНЫ СУЩЕСТВЕННЫЕ ПАРАМЕТРЫ</b>' if item.get('status') == 'BACKDATED' else '🟠 <b>ВЕРОЯТНО: НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ</b>',
              '', f"👤 <b>{esc(item.get('person'))}</b>"]
     if item.get('quarter'):
         lines.append(f"🏢 {esc(item['quarter'])}")
@@ -78,6 +78,9 @@ def format_card(item, bir_checked_at):
     else:
         lines.append("<b>BIR: объект с совпадением комнат и точной площади не найден</b>")
         lines.append("Обычную и специальную цену BIR установить невозможно")
+    for edit in item.get('material_edits') or []:
+        for change in edit.get('changes') or []:
+            lines.append(f"⚠️ {esc(change['field'])}: {esc(change['before'])} → {esc(change['after'])}")
     timestamps = []
     if date(item.get('created_at')):
         timestamps.append('Realt ' + date(item['created_at']))
@@ -100,7 +103,7 @@ def publish(result, owner, bot, run_url, review_items=None):
     receipt={'notification_sent':False,'owner_verified':True,'message_ids':[],
              'delivered_items':[],'documents_sent':[],'run_url':run_url}
     for item in selected:
-        if item.get('status')!='REVIEW': continue
+        if item.get('status') not in ('REVIEW', 'BACKDATED'): continue
         url=item.get('url')
         buttons=[[{'text':'Открыть Realt','url':url,'style':'primary'},
                   {'text':'Открыть BIR','url':'https://bir.by/search-by-parameters/','style':'success'}]] if url and url.startswith('https://realt.by/') else []
@@ -134,7 +137,7 @@ def main():
     unsent, _ = pending(history_db, result)
     replay = os.getenv('REALT_REPLAY_FORMAT_CARDS') == '1' and os.getenv('GITHUB_WORKFLOW') == 'Realt scheduled owner-only'
     if replay:
-        unsent = [item for item in result['items'] if item.get('status') == 'REVIEW']
+        unsent = [item for item in result['items'] if item.get('status') in ('REVIEW', 'BACKDATED')]
     if not unsent:
         print(json.dumps({'notification_sent': False, 'pending_reviews': 0, 'reason': 'No new or changed review cases'}))
         return
