@@ -3,6 +3,8 @@ import csv
 import io
 import json
 import re
+import os
+from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen
 
 from realt_test.policy import created_in_window
@@ -32,6 +34,13 @@ def fetch(url):
         return response.read()
 
 
+def created_since_baseline(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z","+00:00")).date().isoformat() >= "2026-10-23"
+    except (TypeError, ValueError):
+        return False
+
+
 def merge_snapshots(snapshots):
     selected = {}
     for observed_at, rows in sorted(snapshots, key=lambda v: v[0]):
@@ -40,7 +49,7 @@ def merge_snapshots(snapshots):
             email_who = EMAILS.get(str(row.get("contactEmail") or "").strip().lower())
             if who and email_who and who != email_who:
                 raise RuntimeError("Conflicting employee identity in Realt snapshot")
-            if not who or not created_in_window(row.get("createdAt")):
+            if not who or not (created_in_window(row.get("createdAt")) if os.getenv("REALT_CONTINUOUS") != "1" else created_since_baseline(row.get("createdAt"))):
                 continue
             key = str(row.get("uuid") or "")
             if not key:
