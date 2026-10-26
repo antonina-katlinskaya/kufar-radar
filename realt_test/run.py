@@ -36,7 +36,7 @@ def audit(rows, bir, bir_checked, source):
         else:
             status, reason = 'REVIEW', 'Нет сочетания комнат и точной площади в текущем наличии Bir'
         edits = row.get('material_edits') or []
-        if edits and status != 'SKIP':
+        if edits:
             status = 'BACKDATED'
             reason = 'Существенные параметры старого объявления изменены без новой даты публикации'
         same_rooms = [b for b in bir if rooms is not None and decimal_value(b.rooms) == rooms and decimal_value(b.area) is not None]
@@ -82,7 +82,7 @@ def write_reports(result):
         lines.append(f"| {person} | {sum(counts.values())} | {counts.get('OK', 0)} | {counts.get('REVIEW', 0)} |")
     lines += ['', '## Требуют проверки', '']
     for item in result['items']:
-        if item['status'] != 'REVIEW':
+        if item['status'] not in ('REVIEW', 'BACKDATED'):
             continue
         lines += [f"### {item['person']} · [{item['code']}]({item['url']})", '',
                   f"{item['rooms']} комн. · {item['area']} м² · {item['price']} (валюта {item['currency']}). {item['address']}", '', item['reason'], '']
