@@ -21,6 +21,9 @@ OUT = "realt_test/results.json"
 # Confirmed by matching email contact and name in the collected Realt data.
 TRACKED = {
     "i.s.barashenko@minsk.etagi.com": "Ирина Барашенко",
+    "a.v.biyanova@minsk.etagi.com": "Анастасия Биянова",
+    "a.p.zenkevich@minsk.etagi.com": "Анна Зенкевич",
+    "zh.a.vakulenchik@minsk.etagi.com": "Жанна Вакуленчик",
 }
 
 
@@ -82,7 +85,9 @@ def run():
         "scope": "2026-10-22..2026-10-25", "bir_checked_at": bir_checked,
         "realt_source": SNAPSHOTS, "source_rows": len(rows),
         "checked": len(items), "status_counts": dict(Counter(v["status"] for v in items)),
-        "coverage_warning": "Only Realt contact email verified for Irina Barashenko; other controlled people remain unverified and are not silently included.",
+        "coverage_warning": "Four confirmed contact emails are included. Source is a current-listings snapshot, not a complete historical archive; deleted listings from 22–25 October may be absent. REVIEW is not a confirmed violation.",
+        "tracked_people": sorted(TRACKED.values()),
+        "person_counts": dict(Counter(v["person"] for v in items)),
         "notification_sent": False, "items": items,
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
