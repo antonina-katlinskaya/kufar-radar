@@ -51,8 +51,7 @@ jobs:
           name: realt-scheduled-audit
           retention-days: 3
           path: |
-            realt_test/results.json
-            realt_test/pending_reviews.json
+            realt_test/diagnostics.json
             realt_test/notification_receipt.json
             realt_test/health_receipt.json
-          if-no-files-found: warn
+          if-no-files-found: ignore
