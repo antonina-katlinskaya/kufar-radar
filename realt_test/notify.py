@@ -81,7 +81,8 @@ def publish(result, owner, bot, run_url, review_items=None):
 
 
 def main():
-    if os.getenv('GITHUB_REF') != 'refs/heads/' + BRANCH or os.getenv('GITHUB_REPOSITORY') != REPOSITORY:
+    permitted = (os.getenv('GITHUB_REF') == 'refs/heads/' + BRANCH or (os.getenv('GITHUB_REF') == 'refs/heads/main' and os.getenv('GITHUB_WORKFLOW') == 'Realt scheduled owner-only'))
+    if not permitted or os.getenv('GITHUB_REPOSITORY') != REPOSITORY:
         raise RuntimeError('Telegram test is restricted to the explicitly authorized branch')
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
