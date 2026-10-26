@@ -15,7 +15,7 @@ UID = next(iter(TRACKED))
 
 def row(**values):
     return {'uuid': 'ad1', 'code': 123, 'userUuid': UID, 'person': TRACKED[UID],
-            'createdAt': '2026-10-22T00:05:00+03:00', 'rooms': 1,
+            'createdAt': '2026-10-23T00:05:00+03:00', 'rooms': 1,
             'areaTotal': '46.22', 'price': '61981', 'priceCurrency': 978, **values}
 
 
@@ -37,13 +37,13 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(area_equal(value, 46.22))
 
     def test_window_uses_published_local_date(self):
-        self.assertTrue(created_in_window('2026-10-22T00:05:00+03:00'))
-        self.assertTrue(created_in_window('2026-10-25T23:59:59+03:00'))
-        self.assertFalse(created_in_window('2026-10-26T00:00:00+03:00'))
-        self.assertFalse(created_in_window('2026-10-21T23:59:59+03:00'))
+        self.assertTrue(created_in_window('2026-10-23T00:05:00+03:00'))
+        self.assertTrue(created_in_window('2026-10-26T23:59:59+03:00'))
+        self.assertFalse(created_in_window('2026-10-27T00:00:00+03:00'))
+        self.assertFalse(created_in_window('2026-10-22T23:59:59+03:00'))
 
     def test_archive_preserves_disappeared_and_deduplicates(self):
-        snapshots = [('2026-10-22T12:00:00Z', [row(), row(uuid='ad2')]),
+        snapshots = [('2026-10-23T12:00:00Z', [row(), row(uuid='ad2')]),
                      ('2026-10-25T12:00:00Z', [row(price=60000)])]
         merged = {r['uuid']: r for r in merge_snapshots(snapshots)}
         self.assertEqual(set(merged), {'ad1', 'ad2'})
@@ -52,7 +52,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(merged['ad2']['last_seen_at'], snapshots[0][0])
 
     def test_unverified_people_excluded(self):
-        self.assertEqual(merge_snapshots([('2026-10-25', [row(userUuid='unknown'), row(createdAt='2026-10-26')])]), [])
+        self.assertEqual(merge_snapshots([('2026-10-25', [row(userUuid='unknown'), row(createdAt='2026-10-27')])]), [])
 
     def test_conflicting_identity_aborts(self):
         with self.assertRaises(RuntimeError):
