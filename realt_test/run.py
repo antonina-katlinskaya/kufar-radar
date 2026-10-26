@@ -40,11 +40,11 @@ def audit(rows, bir, bir_checked, source):
         items.append({
             'code': str(row.get('code') or ''), 'uuid': row['uuid'], 'person': row['person'],
             'url': f"https://realt.by/sale-flats/object/{row['code']}/",
-            'created_at': row.get('createdAt'), 'updated_at': row.get('updatedAt'),
+            'created_at': row.get('createdAt'), 'updated_at': row.get('updatedAt'), 'radar_checked_at': datetime.now(timezone.utc).isoformat(),
             'first_seen_at': row.get('first_seen_at'), 'last_seen_at': row.get('last_seen_at'),
             'present_in_latest_snapshot': row.get('present_in_latest_snapshot'),
             'rooms': row.get('rooms'), 'area': row.get('areaTotal'), 'floor': row.get('storey'),
-            'address': row.get('address'), 'title': row.get('title'),
+            'address': row.get('address'), 'street': row.get('streetName'), 'house_number': row.get('houseNumber'), 'quarter': row.get('quarter'), 'title': row.get('title'),
             'price': row.get('price'), 'currency': row.get('priceCurrency'),
             'status': status, 'reason': reason,
             'matching_bir_keys': [b.object_key for b in exact],
