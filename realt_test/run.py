@@ -53,7 +53,7 @@ def audit(rows, bir, bir_checked, source):
         })
     counts = {p: dict(Counter(x['status'] for x in items if x['person'] == p)) for p in TRACKED.values()}
     return {
-        'scope': '2026-10-22..2026-10-25', 'checked_at': datetime.now(timezone.utc).isoformat(),
+        'scope': '2026-10-23..2026-10-26', 'checked_at': datetime.now(timezone.utc).isoformat(),
         'bir_checked_at': bir_checked, 'bir_objects': len(bir), 'source': source,
         'checked': len(items), 'status_counts': dict(Counter(x['status'] for x in items)),
         'person_status_counts': counts, 'tracked_people': list(TRACKED.values()),
@@ -70,7 +70,7 @@ def write_reports(result):
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(result['items'])
-    lines = ['# Realt — тест', '', 'Объявления 22–25 октября 2026 включительно.', '',
+    lines = ['# Realt — тест', '', 'Объявления 23–26 октября 2026 включительно.', '',
              f"Проверено: {result['checked']}. Bir: {result['bir_checked_at']}.", '', result['coverage_warning'], '',
              '| Сотрудник | Всего | Совпали | Проверить |', '|---|---:|---:|---:|']
     for person, counts in result['person_status_counts'].items():
