@@ -8,13 +8,19 @@ on:
     paths:
       - '.github/workflows/realt-scheduled-owner.yml'
   workflow_dispatch: {}
+  workflow_run:
+    workflows: ['Radar']
+    types: [completed]
+    branches: [main]
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: realt-owner-scheduled-single
   cancel-in-progress: false
 jobs:
   audit:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -31,6 +37,13 @@ jobs:
       - run: pip install httpx==0.28.1
       - name: Verify owner-only policy and durable GitHub state
         run: python -m unittest discover -s realt_test -p 'test_*.py' -v
+      - name: Export the existing successful Bir refresh without scanning sources
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          BIR_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+          BIR_EXPORT_META_PATH: /tmp/realt-bir-scan.json
+        run: python -m realt_test.bridge_bir
       - name: Check Realt listings and exported fresh Bir
         run: python -m realt_test.run
       - name: Preview only new reviews
