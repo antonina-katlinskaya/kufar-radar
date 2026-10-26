@@ -68,6 +68,7 @@ def audit(rows, bir, bir_checked, source):
 
 def write_reports(result):
     OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.with_name('diagnostics.json').write_text(json.dumps({k:result.get(k) for k in ('checked_at','checked','bir_checked_at','status_counts','source','notification_paused')},ensure_ascii=False),encoding='utf-8')
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     fields = ['person', 'code', 'created_at', 'area', 'rooms', 'price', 'currency', 'status', 'reason', 'address', 'floor', 'url', 'present_in_latest_snapshot', 'first_seen_at', 'last_seen_at']
     with OUT.with_suffix('.csv').open('w', encoding='utf-8-sig', newline='') as f:

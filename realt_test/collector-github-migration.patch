@@ -1,0 +1,697 @@
+diff --git a/.github/scripts/collection_due.py b/.github/scripts/collection_due.py
+index e74e44c..a377212 100644
+--- a/.github/scripts/collection_due.py
++++ b/.github/scripts/collection_due.py
+@@ -1,47 +1,46 @@
+-"""Retry missed collection slots; manual and recovery-patch runs always collect."""
++"""Shared daytime freshness gate; no forced fresh/manual recollection."""
+ import csv
+ import datetime as dt
++import json
+ import os
+ from pathlib import Path
+-
+-UTC = dt.timezone.utc
+-SLOT_HOURS_UTC = (6, 9, 12, 15, 18)
+-
+-
+-def latest_slot(now):
+-    today = now.astimezone(UTC).replace(hour=0, minute=17, second=0, microsecond=0)
+-    slots = [today + dt.timedelta(hours=hour) for hour in SLOT_HOURS_UTC]
+-    return max((slot for slot in slots if slot <= now),
+-               default=slots[-1] - dt.timedelta(days=1))
+-
+-
+-def latest_snapshot(path):
+-    if not Path(path).exists():
+-        return ""
+-    with open(path, encoding="utf-8-sig", newline="") as f:
+-        return max((r["snapshot_at"] for r in csv.DictReader(f)
+-                    if r.get("uuid") and r.get("snapshot_at")), default="")
+-
+-
+-def collection_due(last, event, now):
+-    if event != "schedule" or not last:
+-        return True
+-    timestamp = dt.datetime.fromisoformat(last.replace("Z", "+00:00"))
+-    return timestamp < latest_slot(now)
+-
++import sys
++sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
++from pipeline.schedule import due, expected_slot
++from pipeline.cadence import choose, load_history
++
++def latest_snapshot(path="data/snapshots.csv"):
++    state=Path("data/collection_state.json")
++    if state.exists():
++        data=json.loads(state.read_text())
++        if data.get("complete") is not True:raise RuntimeError("Incomplete collection state")
++        return data["snapshot_at"]
++    if not Path(path).exists():return ""
++    with open(path,encoding="utf-8-sig",newline="") as file:
++        return max((r["snapshot_at"] for r in csv.DictReader(file) if r.get("uuid")),default="")
+ 
+ def main():
+-    now = dt.datetime.now(UTC)
+-    last = latest_snapshot("data/snapshots.csv")
+-    due = collection_due(last, os.environ.get("COLLECTION_EVENT", ""), now)
+-    message = f"Last snapshot: {last or 'none'}; expected slot: {latest_slot(now).isoformat()}; collect: {due}"
+-    print(message)
+-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+-        f.write(f"due={str(due).lower()}\nlast_snapshot={last}\n")
+-    if os.environ.get("GITHUB_STEP_SUMMARY"):
+-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+-            f.write(message + "\n")
+-
+-
+-if __name__ == "__main__":
+-    main()
++    now=dt.datetime.now(dt.timezone.utc)
++    history=load_history()
++    data_bytes=sum(p.stat().st_size for p in Path('data').rglob('*') if p.is_file())
++    budget={"safe":data_bytes<2_000_000_000,"data_bytes":data_bytes,"d1_rows_read":0,"d1_rows_written":0,
++            "reason":"Сборщик работает в GitHub без D1; предел рабочего архива 2 ГБ"}
++    interval,reason=choose(history,budget,now)
++    last=latest_snapshot()
++    target=expected_slot(now,interval)
++    attempts=[r for r in history if r.get("slot")==target.isoformat()]
++    needed=due(last,now,interval) and len(attempts)<2
++    if attempts:
++        cooldown=60 if attempts[-1].get("http_403") or attempts[-1].get("http_429") else 30
++        if now-dt.datetime.fromisoformat(attempts[-1]["started_at"])<dt.timedelta(minutes=cooldown):needed=False
++    blocked=[r for r in history if r.get('http_403') or r.get('http_429')]
++    if blocked and now-dt.datetime.fromisoformat(blocked[-1]['started_at'])<dt.timedelta(minutes=60):needed=False
++    if data_bytes>=2_000_000_000:needed=False
++    policy={"interval_minutes":interval,"reason":reason,"budget":budget,"checked_at":now.isoformat()}
++    folder=Path("data/health");folder.mkdir(parents=True,exist_ok=True)
++    (folder/"cadence.json").write_text(json.dumps(policy,ensure_ascii=False,indent=2),encoding="utf-8")
++    with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as file:
++        file.write(f"due={str(needed).lower()}\nlast_snapshot={last}\nslot={target.isoformat()}\n")
++    print(json.dumps({**policy,"due":needed,"last_snapshot":last},ensure_ascii=False))
++
++if __name__=="__main__":main()
+diff --git a/.github/scripts/telegram_watchdog.py b/.github/scripts/telegram_watchdog.py
+index 4166ac6..5c4d34a 100644
+--- a/.github/scripts/telegram_watchdog.py
++++ b/.github/scripts/telegram_watchdog.py
+@@ -7,22 +7,28 @@ import urllib.parse
+ import urllib.request
+ 
+ UTC = dt.timezone.utc
+-HOURS = (6, 9, 12, 15, 18)
+-GRACE = dt.timedelta(minutes=45)
++import sys
++sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
++from pipeline.schedule import expected_slot
++import json
++OWNER_ID = "352252956"
++GRACE = dt.timedelta(minutes=25)
+ STATE = pathlib.Path(".github/state/telegram_alerted_slot.txt")
+ SNAPSHOTS = pathlib.Path("data/snapshots.csv")
+ 
+ def last_due_slot(now):
+-    day = now.date()
+-    for days_back in range(2):
+-        date = day - dt.timedelta(days=days_back)
+-        for hour in reversed(HOURS):
+-            slot = dt.datetime.combine(date, dt.time(hour, 17), tzinfo=UTC)
+-            if slot + GRACE <= now:
+-                return slot
+-    raise RuntimeError("No due collection slot")
++    policy = pathlib.Path("data/health/cadence.json")
++    interval = json.loads(policy.read_text()).get("interval_minutes", 60) if policy.exists() else 60
++    return expected_slot(now, interval, grace=25).astimezone(UTC)
++
+ 
+ def latest_snapshot():
++    marker = pathlib.Path("data/collection_state.json")
++    if marker.exists():
++        state = json.loads(marker.read_text())
++        if state.get("complete") is not True:
++            raise RuntimeError("Incomplete collection marker")
++        return state["snapshot_at"]
+     with SNAPSHOTS.open(encoding="utf-8-sig", newline="") as file:
+         return max((row["snapshot_at"] for row in csv.DictReader(file)
+                     if row.get("uuid") and row.get("snapshot_at")), default="")
+@@ -41,7 +47,7 @@ def main():
+         return
+     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+     chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+-    if not token or not chat:
++    if not token or chat != OWNER_ID:
+         print("::warning::Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID as GitHub Actions secrets to enable alerts.")
+         return
+     slot_local = (slot + dt.timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
+diff --git a/.github/workflows/collect.yml b/.github/workflows/collect.yml
+index a1f2ddd..5f93503 100644
+--- a/.github/workflows/collect.yml
++++ b/.github/workflows/collect.yml
+@@ -2,16 +2,16 @@ name: Realt collector
+ 
+ on:
+   schedule:
+-    # Main: 09:17, 12:17, 15:17, 18:17, 21:17 Minsk (UTC+3).
+-    - cron: "17 6,9,12,15,18 * * *"
+-    # Recovery checks every 15 minutes retry missed slots.
+-    - cron: "11,26,41,56 6-21 * * *"
++    # 07:10/07:40..21:40 Minsk; freshness gate starts hourly.
++    - cron: "10,40 4-18 * * *"
+   workflow_dispatch: {}
+   push:
+     branches: [main]
+     paths:
+       - .github/workflows/collect.yml
+       - .github/scripts/collection_due.py
++      - pipeline/**
++      - tests/**
+ 
+ permissions:
+   contents: write
+@@ -23,7 +23,7 @@ concurrency:
+ jobs:
+   collect:
+     runs-on: ubuntu-latest
+-    timeout-minutes: 90
++    timeout-minutes: 35
+     steps:
+       - uses: actions/checkout@v4
+         with:
+@@ -33,19 +33,22 @@ jobs:
+         with:
+           python-version: "3.12"
+ 
++      - name: Install deps
++        run: pip install -r requirements.txt
++
++      - name: Verify scheduler and archive safety
++        run: python -m unittest discover -s tests -v
++
+       - name: Check whether collection is due
+         id: freshness
+-        env:
+-          COLLECTION_EVENT: ${{ github.event_name }}
+         run: python .github/scripts/collection_due.py
+ 
+-      - name: Install deps
+-        if: steps.freshness.outputs.due == 'true'
+-        run: pip install -r requirements.txt
+-
+       - name: Collect
++        id: collect
+         if: steps.freshness.outputs.due == 'true'
+-        run: python -u collector.py
++        env:
++          COLLECTION_SLOT: ${{ steps.freshness.outputs.slot }}
++        run: python -u -m pipeline.collect
+ 
+       - name: Verify new snapshot
+         if: steps.freshness.outputs.due == 'true'
+@@ -53,9 +56,12 @@ jobs:
+           PREVIOUS_SNAPSHOT: ${{ steps.freshness.outputs.last_snapshot }}
+         run: |
+           python - <<'PY'
+-          import csv, os
+-          with open('data/snapshots.csv', encoding='utf-8-sig', newline='') as f:
+-              latest = max((r['snapshot_at'] for r in csv.DictReader(f) if r.get('uuid')), default='')
++          import json, os
++          with open('data/collection_state.json', encoding='utf-8') as f:
++              state = json.load(f)
++          if state.get('complete') is not True:
++              raise SystemExit('Incomplete snapshot')
++          latest = state['snapshot_at']
+           if not latest or latest <= os.environ['PREVIOUS_SNAPSHOT']:
+               raise SystemExit('Collector did not produce a new non-empty snapshot')
+           print('Verified new snapshot:', latest)
+@@ -66,11 +72,15 @@ jobs:
+         run: python analytics.py
+ 
+       - name: Commit data
+-        if: steps.freshness.outputs.due == 'true'
++        if: always() && steps.freshness.outputs.due == 'true'
+         run: |
+           git config user.name "realt-collector"
+           git config user.email "bot@users.noreply.github.com"
+-          git add data
++          if [ "${{ steps.collect.outcome }}" = "success" ]; then
++            git add data
++          else
++            git add data/health
++          fi
+           if git diff --cached --quiet; then
+             echo "No data changes"
+             exit 0
+diff --git a/.github/workflows/watchdog.yml b/.github/workflows/watchdog.yml
+index a1f3d17..c5af136 100644
+--- a/.github/workflows/watchdog.yml
++++ b/.github/workflows/watchdog.yml
+@@ -2,7 +2,7 @@ name: Realt collection watchdog
+ 
+ on:
+   schedule:
+-    - cron: "8,23,38,53 * * * *"
++    - cron: "7,37 4-19 * * *"
+   workflow_dispatch: {}
+ 
+ permissions:
+diff --git a/docs/2026-10-26-hourly-trial.md b/docs/2026-10-26-hourly-trial.md
+new file mode 100644
+index 0000000..3013bdd
+--- /dev/null
++++ b/docs/2026-10-26-hourly-trial.md
+@@ -0,0 +1,19 @@
++# Realt Collector: hourly trial, 26 October 2026
++
++The collector runs entirely on standard GitHub-hosted runners in this public repository. No Cloudflare D1 or Workers credentials are required. The original collector.py, queries.py and config.py queries, filters and pauses are unchanged.
++
++## Schedule and promotion
++
++07:10 through 21:10 Europe/Minsk: 15 full hourly slots. The cron wakes at :10 and :40, but the shared freshness gate skips already satisfied slots and all night work. After at least 24 hours and 15 successful measured collections, the gate allows 30 daily slots through 21:40. It requires the last 15 runs to succeed without 403/429, each collection at most 20 minutes, and working data below 2 GB. Any failed condition retains/reverts to hourly. Source-wide 403/429 cooldown: 60 minutes; at most two attempts per slot. No paid services are enabled.
++
++The concurrency group prevents parallel collections. Actual object response receipt times are written to raw snapshots and CSV. Failed source responses/GraphQL errors and suspicious >20% count collapse do not replace the last complete snapshot. On failure only health diagnostics are committed. The marker is committed with a verified nonempty snapshot.
++
++## Archive
++
++Every CSV history row is retained in lossless daily gzip partitions under data/snapshots/. data/snapshots.csv becomes a compatibility window of 32 recent distinct snapshots. Existing raw originals remain; new raw snapshots are gzip-compressed with verified roundtrip. Analytics and the dashboard use this recent window, not the full lifetime history. At 2 GB of working data, collection stops for archive maintenance; no history is automatically deleted. This is a finite storage budget, not a promise of unlimited permanent storage.
++
++## Observations before deployment
++
++19–25 October: most days had 3–4 inferred full collections despite five nominal daily slots; schedule wakeups can be delayed or omitted by GitHub. The measured 26 October run 40326081859 collected for 644 seconds (12:54:11–13:04:55 UTC). Existing raw: 63 files, 691,287,179 bytes uncompressed; snapshots.csv: 57,978,052 bytes. These measurements justify a trial, not immediate 30-minute activation.
++
++GitHub schedule is best effort. The watchdog uses the same dynamically chosen slots and 25-minute grace, and can itself be delayed by GitHub. No hard maximum alert latency is guaranteed.
+diff --git a/pipeline/budget.py b/pipeline/budget.py
+new file mode 100644
+index 0000000..6ff2981
+--- /dev/null
++++ b/pipeline/budget.py
+@@ -0,0 +1,38 @@
++"""Read-only account-wide D1 budget; no telemetry means no promotion."""
++import datetime as dt
++import json
++import os
++import urllib.request
++
++READ_LIMIT, WRITE_LIMIT, SAFETY_FRACTION = 5_000_000, 100_000, 0.80
++
++
++def evaluate(groups):
++    reads = sum(int(g["sum"]["rowsRead"]) for g in groups)
++    writes = sum(int(g["sum"]["rowsWritten"]) for g in groups)
++    if reads < 0 or writes < 0:
++        raise ValueError("Invalid usage counters")
++    return {"safe": reads < READ_LIMIT*SAFETY_FRACTION and writes < WRITE_LIMIT*SAFETY_FRACTION,
++            "rows_read": reads, "rows_written": writes, "read_limit": READ_LIMIT,
++            "write_limit": WRITE_LIMIT, "safety_fraction": SAFETY_FRACTION}
++
++
++def read_budget(now=None):
++    now = now or dt.datetime.now(dt.timezone.utc)
++    account, token = os.getenv("CF_ACCOUNT_ID", ""), os.getenv("CF_D1_API_TOKEN", "")
++    if not account or not token:
++        return {"safe": False, "reason": "Cloudflare analytics credential unavailable"}
++    day = now.astimezone(dt.timezone.utc).date().isoformat()
++    query = ('query {viewer{accounts(filter:{accountTag:"'+account+'"}){'
++             'd1AnalyticsAdaptiveGroups(limit:1000,filter:{date_geq:"'+day+'",date_leq:"'+day+
++             '"}){dimensions{databaseId}sum{rowsRead rowsWritten}}}}}')
++    request = urllib.request.Request("https://api.cloudflare.com/client/v4/graphql",
++              data=json.dumps({"query":query}).encode(), headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"})
++    try:
++        with urllib.request.urlopen(request,timeout=25) as response: payload=json.load(response)
++        if payload.get("errors"): raise ValueError("Analytics rejected")
++        accounts=payload["data"]["viewer"]["accounts"]
++        if len(accounts)!=1 or not accounts[0]["d1AnalyticsAdaptiveGroups"]: raise ValueError("Missing telemetry")
++        return {**evaluate(accounts[0]["d1AnalyticsAdaptiveGroups"]),"checked_at":now.isoformat(),"utc_date":day}
++    except Exception:
++        return {"safe":False,"reason":"Cloudflare analytics unavailable or permission missing"}
+diff --git a/pipeline/cadence.py b/pipeline/cadence.py
+new file mode 100644
+index 0000000..940a6b6
+--- /dev/null
++++ b/pipeline/cadence.py
+@@ -0,0 +1,23 @@
++import datetime as dt
++import json
++from pathlib import Path
++
++
++def choose(history,budget,now):
++    valid=[r for r in history if r.get("status")=="ok"]
++    if not valid:return 60,"Начальный часовой этап"
++    first=dt.datetime.fromisoformat(valid[0]["started_at"])
++    if now-first<dt.timedelta(hours=24) or len(valid)<15:
++        return 60,"Нужно не менее 24 часов и 15 успешных сборов часового этапа"
++    recent=history[-15:]
++    if any(r.get("status")!="ok" or r.get("http_403") or r.get("http_429") for r in recent):
++        return 60,"В последних запусках есть ошибки или блокировка источника"
++    if any(float(r.get("duration_seconds",99999))>1200 for r in recent):
++        return 60,"Длительность сбора превышает 20 минут"
++    if not budget.get("safe"):return 60,budget.get("reason") or "Недостаточно запаса ресурсов архива"
++    return 30,"Часовой этап пройден, расходы ниже безопасного порога"
++
++
++def load_history():
++    file=Path("data/health/collection_runs.json")
++    return json.loads(file.read_text()) if file.exists() else []
+diff --git a/pipeline/collect.py b/pipeline/collect.py
+new file mode 100644
+index 0000000..9ea63be
+--- /dev/null
++++ b/pipeline/collect.py
+@@ -0,0 +1,149 @@
++"""Transactional wrapper: original anonymous queries, filters and pauses are preserved."""
++import contextlib
++import csv
++import datetime as dt
++import gzip
++import io
++import json
++import os
++from pathlib import Path
++import shutil
++import tempfile
++import time
++
++import requests
++import collector
++import config as C
++from pipeline.storage import rotate, compress_raw
++
++ROOT = Path.cwd()
++DATA = ROOT / "data"
++HEALTH = DATA / "health"
++
++
++class SourceBlocked(BaseException):
++    pass
++
++
++def atomic_json(path, value):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    tmp = path.with_suffix(".tmp")
++    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
++    tmp.replace(path)
++
++
++def run():
++    HEALTH.mkdir(parents=True, exist_ok=True)
++    history_file = HEALTH / "collection_runs.json"
++    history = json.loads(history_file.read_text()) if history_file.exists() else []
++    started = dt.datetime.now(dt.timezone.utc)
++    record = {"started_at": started.isoformat(), "status": "failed", "http_403": 0, "http_429": 0,
++              "requests": 0, "d1_rows_read": 0, "d1_rows_written": 0}
++    # Never silently retry a failed slot indefinitely.
++    slot = os.environ.get("COLLECTION_SLOT", "")
++    attempts = [r for r in history if r.get("slot") == slot]
++    if slot and len(attempts) >= 2:
++        raise RuntimeError("Retry budget exhausted for this collection slot")
++    record["slot"] = slot
++    received = {}
++    original_session = requests.Session
++
++    class TrackedSession(original_session):
++        def post(self, *args, **kwargs):
++            record["requests"] += 1
++            response = super().post(*args, **kwargs)
++            if response.status_code in (403, 429):
++                record["http_" + str(response.status_code)] += 1
++                raise SourceBlocked("Realt source blocked: HTTP " + str(response.status_code))
++            if response.ok:
++                payload = response.json()
++                for entry in payload if isinstance(payload, list) else [payload]:
++                    if entry.get("errors"):
++                        raise SourceBlocked("Incomplete GraphQL response")
++                    objects = ((entry.get("data") or {}).get("searchObjects") or {}).get("body") or {}
++                    at = dt.datetime.now(dt.timezone.utc).isoformat()
++                    for item in objects.get("results") or []:
++                        received[str(item.get("uuid"))] = at
++            return response
++
++    original_paths={name:getattr(C,name) for name in ('DATA_DIR','RAW_DIR','REPORTS_DIR','SNAPSHOTS_CSV','SEEN_JSON')}
++    if sum(p.stat().st_size for p in DATA.rglob('*') if p.is_file())>=2_000_000_000:
++        raise RuntimeError('Archive size guard reached (2 GB); collection stopped')
++    staging = Path(tempfile.mkdtemp(prefix="realt-collection-"))
++    try:
++        # Original collector's path settings are redirected, not its query/filter/pause logic.
++        for filename in ("snapshots.csv", "listings_seen.json"):
++            if (DATA / filename).exists():
++                shutil.copy2(DATA / filename, staging / filename)
++        C.DATA_DIR, C.RAW_DIR = str(staging), str(staging / "raw")
++        C.REPORTS_DIR = str(staging / "reports")
++        C.SNAPSHOTS_CSV, C.SEEN_JSON = str(staging / "snapshots.csv"), str(staging / "listings_seen.json")
++        requests.Session = TrackedSession
++        collector.run()
++        raw_files = list((staging / "raw").glob("*.json"))
++        if len(raw_files) != len(C.AGENCIES):
++            raise RuntimeError("Incomplete agency snapshot")
++        completed = dt.datetime.now(dt.timezone.utc)
++        latest, objects_count = "", 0
++        raw_paths = []
++        for file in raw_files:
++            raw = json.loads(file.read_text())
++            objects = raw.get("minsk_mir_objects") or []
++            ids = [str(o.get("uuid") or "") for o in objects]
++            if not ids or not all(ids) or len(ids) != len(set(ids)):
++                raise RuntimeError("Empty or duplicate source UUIDs")
++            for obj in objects:
++                obj["observed_at"] = received.get(str(obj["uuid"]))
++                if not obj["observed_at"]:
++                    raise RuntimeError("Missing actual observation time")
++            raw.update(collection_started_at=started.isoformat(), collection_completed_at=completed.isoformat())
++            file.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
++            latest = max(latest, raw["snapshot_at"])
++            objects_count += len(objects)
++            raw_paths.append("data/raw/" + file.name + ".gz")
++        with (staging / "snapshots.csv").open(encoding="utf-8-sig", newline="") as f:
++            rows = list(csv.DictReader(f))
++        fields = list(rows[0])
++        if "observed_at" not in fields:
++            fields.append("observed_at")
++        for row in rows:
++            if row["snapshot_at"] == latest:
++                row["observed_at"] = received.get(row["uuid"], "")
++        with (staging / "snapshots.csv").open("w", encoding="utf-8-sig", newline="") as f:
++            writer = csv.DictWriter(f, fields)
++            writer.writeheader()
++            writer.writerows(rows)
++        # Preserve every historic CSV row before bounding the compatibility file.
++        if (DATA / "snapshots").exists():
++            shutil.copytree(DATA / "snapshots", staging / "snapshots")
++        storage = rotate(staging)
++        # Reject an implausible listing collapse instead of committing a partial snapshot.
++        marker=DATA/'collection_state.json'
++        if marker.exists() and objects_count<json.loads(marker.read_text()).get('rows',0)*0.8:
++            raise RuntimeError('Suspicious source count drop exceeds 20%; requires review')
++        compress_raw(staging / "raw")
++        # A full snapshot is made visible only after all checks complete.
++        for file in staging.rglob("*"):
++            if file.is_file():
++                target = DATA / file.relative_to(staging)
++                target.parent.mkdir(parents=True, exist_ok=True)
++                shutil.copy2(file, target)
++        record.update(status="ok", completed_at=completed.isoformat(), snapshot_at=latest,
++                      objects=objects_count, duration_seconds=round((completed-started).total_seconds(), 3),
++                      storage=storage)
++        atomic_json(DATA / "collection_state.json", {"schema": 1, "complete": True,
++                    "snapshot_at": latest, "completed_at": completed.isoformat(), "rows": objects_count,
++                    "raw_paths": raw_paths, "observed_at": "per-object in raw snapshots", "duration_seconds": record["duration_seconds"]})
++    except BaseException as error:
++        record.update(error=type(error).__name__ + ": " + str(error), duration_seconds=round((dt.datetime.now(dt.timezone.utc)-started).total_seconds(),3))
++        raise
++    finally:
++        requests.Session = original_session
++        for name,value in original_paths.items():setattr(C,name,value)
++        shutil.rmtree(staging, ignore_errors=True)
++        history.append(record)
++        atomic_json(history_file, history[-1000:])
++
++
++if __name__ == "__main__":
++    run()
+diff --git a/pipeline/schedule.py b/pipeline/schedule.py
+new file mode 100644
+index 0000000..0ab5ef0
+--- /dev/null
++++ b/pipeline/schedule.py
+@@ -0,0 +1,35 @@
++"""One shared Minsk daytime policy for collection and watchdog."""
++from datetime import datetime, timedelta, timezone
++from zoneinfo import ZoneInfo
++
++MINSK = ZoneInfo("Europe/Minsk")
++UTC = timezone.utc
++
++
++def slots(day, interval=60):
++    if interval not in (30, 60):
++        raise ValueError("Only free hourly/half-hourly stages are supported")
++    start = datetime.combine(day, datetime.min.time(), MINSK).replace(hour=7, minute=10)
++    return [start + timedelta(minutes=n) for n in range(0, 15 * 60, interval)]
++
++
++def expected_slot(now, interval=60, grace=0):
++    local = now.astimezone(MINSK)
++    candidates = slots(local.date() - timedelta(days=1), interval) + slots(local.date(), interval)
++    return max(t for t in candidates if t + timedelta(minutes=grace) <= local)
++
++
++def is_daytime(now):
++    return 7 <= now.astimezone(MINSK).hour < 22
++
++
++def due(last, now, interval=60):
++    if not is_daytime(now):
++        return False
++    target = expected_slot(now, interval)
++    if target.date() != now.astimezone(MINSK).date():
++        return False
++    if not last:
++        return True
++    previous = datetime.fromisoformat(last.replace("Z", "+00:00"))
++    return previous < target
+diff --git a/pipeline/storage.py b/pipeline/storage.py
+new file mode 100644
+index 0000000..420d41c
+--- /dev/null
++++ b/pipeline/storage.py
+@@ -0,0 +1,67 @@
++"""Lossless daily gzip partitions and a bounded compatibility CSV."""
++import csv
++import gzip
++import io
++import json
++from collections import defaultdict
++from pathlib import Path
++
++
++def rotate(data_dir):
++    data = Path(data_dir)
++    flat = data / "snapshots.csv"
++    with flat.open(encoding="utf-8-sig", newline="") as f:
++        reader = csv.DictReader(f)
++        fields = list(reader.fieldnames or [])
++        rows = list(reader)
++    if not rows or "snapshot_at" not in fields:
++        raise ValueError("Cannot rotate an empty or invalid snapshot")
++    groups = defaultdict(dict)
++    for row in rows:
++        groups[row["snapshot_at"][:10]][(row["snapshot_at"], row["uuid"])] = row
++    archive = data / "snapshots"
++    archive.mkdir(exist_ok=True)
++    for day, current in groups.items():
++        target = archive / (day + ".csv.gz")
++        merged = {}
++        if target.exists():
++            with gzip.open(target, "rt", encoding="utf-8-sig", newline="") as f:
++                old = csv.DictReader(f)
++                fields = list(dict.fromkeys(fields + list(old.fieldnames or [])))
++                for row in old:
++                    merged[(row["snapshot_at"], row["uuid"])] = row
++        merged.update(current)
++        stream = io.StringIO(newline="")
++        writer = csv.DictWriter(stream, fields)
++        writer.writeheader()
++        writer.writerows(merged[k] for k in sorted(merged))
++        encoded = stream.getvalue().encode("utf-8-sig")
++        temp = target.with_suffix(".tmp")
++        temp.write_bytes(gzip.compress(encoded, mtime=0))
++        if gzip.decompress(temp.read_bytes()) != encoded:
++            raise ValueError("Archive roundtrip failed")
++        temp.replace(target)
++    # Keep the last 32 *distinct* snapshots, not rows: enough for daily views at 30 min.
++    times = sorted({r["snapshot_at"] for r in rows})[-32:]
++    kept = [r for r in rows if r["snapshot_at"] in set(times)]
++    temp = flat.with_suffix(".tmp")
++    with temp.open("w", encoding="utf-8-sig", newline="") as f:
++        writer = csv.DictWriter(f, fields)
++        writer.writeheader()
++        writer.writerows(kept)
++    temp.replace(flat)
++    if flat.stat().st_size > 75 * 1024 * 1024:
++        raise ValueError("Compatibility CSV exceeds safety budget")
++    return {"archive_days": len(list(archive.glob("*.csv.gz"))), "recent_snapshots": len(times),
++            "recent_csv_bytes": flat.stat().st_size}
++
++
++def compress_raw(raw_dir):
++    for source in Path(raw_dir).glob("*.json"):
++        content = source.read_bytes()
++        target = source.with_suffix(".json.gz")
++        encoded = gzip.compress(content, mtime=0)
++        if gzip.decompress(encoded) != content:
++            raise ValueError("Raw snapshot compression failed")
++        target.write_bytes(encoded)
++        source.unlink()
+diff --git a/tests/test_pipeline.py b/tests/test_pipeline.py
+new file mode 100644
+index 0000000..d8b0d6a
+--- /dev/null
++++ b/tests/test_pipeline.py
+@@ -0,0 +1,69 @@
++import csv
++import datetime as dt
++import gzip
++from pathlib import Path
++import tempfile
++import unittest
++from pipeline.schedule import slots,due,UTC
++from pipeline.storage import rotate
++from pipeline.cadence import choose
++from pipeline.budget import evaluate
++
++
++class ScheduleTests(unittest.TestCase):
++    def test_daytime_slots(self):
++        day=dt.date(2026,10,26)
++        self.assertEqual(len(slots(day,60)),15)
++        self.assertEqual(len(slots(day,30)),30)
++        self.assertEqual(slots(day,30)[0].strftime("%H:%M"),"07:10")
++        self.assertEqual(slots(day,30)[-1].strftime("%H:%M"),"21:40")
++    def test_no_night_and_no_fresh_repeat(self):
++        self.assertFalse(due("",dt.datetime(2026,10,26,20,tzinfo=UTC)))
++        now=dt.datetime(2026,10,26,5,12,tzinfo=UTC)
++        self.assertTrue(due("2026-10-26T04:10:00Z",now))
++        self.assertFalse(due("2026-10-26T05:11:00Z",now))
++    def test_unknown_or_high_budget_cannot_promote(self):
++        now=dt.datetime(2026,10,27,12,tzinfo=UTC)
++        h=[{"status":"ok","started_at":(now-dt.timedelta(hours=30-i)).isoformat(),"duration_seconds":600} for i in range(15)]
++        self.assertEqual(choose(h,{"safe":False},now)[0],60)
++        self.assertEqual(choose(h,{"safe":True},now)[0],30)
++        h[-1]["http_429"]=1
++        self.assertEqual(choose(h,{"safe":True},now)[0],60)
++    def test_account_total_includes_all_databases(self):
++        r=evaluate([{"sum":{"rowsRead":3500000,"rowsWritten":30000}},{"sum":{"rowsRead":600000,"rowsWritten":2000}}])
++        self.assertFalse(r["safe"])
++        self.assertEqual(r["rows_read"],4100000)
++
++
++class StorageTests(unittest.TestCase):
++    def test_lossless_idempotent_rotation_and_bounded_tail(self):
++        with tempfile.TemporaryDirectory() as directory:
++            root=Path(directory);file=root/"snapshots.csv"
++            rows=[{"snapshot_at":f"2026-10-{20+i//24:02d}T{i%24:02d}:00:00Z","uuid":"x","price":str(i)} for i in range(60)]
++            with file.open("w",encoding="utf-8-sig",newline="") as f:
++                w=csv.DictWriter(f,list(rows[0]));w.writeheader();w.writerows(rows)
++            rotate(root)
++            def history():
++                out=[]
++                for p in sorted((root/"snapshots").glob("*.gz")):
++                    with gzip.open(p,"rt",encoding="utf-8-sig",newline="") as f:out.extend(csv.DictReader(f))
++                return out
++            self.assertEqual(history(),rows)
++            rotate(root);self.assertEqual(history(),rows)
++            with file.open(encoding="utf-8-sig") as f:self.assertEqual(len(list(csv.DictReader(f))),32)
++
++class TransactionTests(unittest.TestCase):
++    def test_failed_original_collector_preserves_source_and_restores_paths(self):
++        from unittest.mock import patch
++        import pipeline.collect as job
++        import config
++        with tempfile.TemporaryDirectory() as directory:
++            root=Path(directory);data=root/'data';data.mkdir()
++            marker=data/'collection_state.json';marker.write_text('{"complete":true,"snapshot_at":"old"}')
++            old_paths={k:getattr(config,k) for k in ('DATA_DIR','RAW_DIR','REPORTS_DIR','SNAPSHOTS_CSV','SEEN_JSON')}
++            with patch.object(job,'DATA',data),patch.object(job,'HEALTH',data/'health'),patch.object(job.collector,'run',side_effect=RuntimeError('source incomplete')):
++                with self.assertRaisesRegex(RuntimeError,'source incomplete'):job.run()
++            self.assertEqual(marker.read_text(),'{"complete":true,"snapshot_at":"old"}')
++            self.assertEqual(old_paths,{k:getattr(config,k) for k in old_paths})
++            import json
++            self.assertEqual(json.loads((data/'health'/'collection_runs.json').read_text())[-1]['status'],'failed')

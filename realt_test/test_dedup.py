@@ -41,3 +41,16 @@ class DedupTests(unittest.TestCase):
             select_new_reviews({"items":[]},[])
         with self.assertRaises(ValueError):
             select_new_reviews({"items":[self.item(uuid="")]},{})
+
+
+class MigrationDedupTests(unittest.TestCase):
+    def test_csv_numeric_strings_do_not_repeat_after_json_migration(self):
+        import hashlib,json
+        from realt_test.dedup import fingerprint,select_new_reviews
+        item={'uuid':'x','person':'Name','rooms':3,'area':44.42,'price':60594,'currency':978,'status':'REVIEW','reason':'same','material_edits':[]}
+        old={**item,'rooms':'3','area':'44.42','price':'60594.0','currency':'978'}
+        old_hash=hashlib.sha256(json.dumps(old,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        self.assertEqual(fingerprint(item),fingerprint(old))
+        self.assertEqual(select_new_reviews({'items':[item]},{'x':old_hash})[0],[])
+        changed={**item,'price':60595}
+        self.assertEqual(len(select_new_reviews({'items':[changed]},{'x':old_hash})[0]),1)
