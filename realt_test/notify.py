@@ -40,7 +40,7 @@ def publish(result, owner, bot, run_url):
     target = validate_owner(owner, chat)
     if not result.get('items') or not result.get('bir_checked_at'):
         raise RuntimeError('Refusing to send an empty or unchecked report')
-    text = ['🧪 Realt — тест', '', 'Объявления, созданные 22–25 октября 2026 включительно.',
+    text = ['🧪 Realt — тест', '', 'Объявления, созданные 23–26 октября 2026 включительно.',
             f"Проверено: {result['checked']}. Совпали: {result['status_counts'].get('OK', 0)}. Требуют проверки: {result['status_counts'].get('REVIEW', 0)}.", '']
     for person, counts in result['person_status_counts'].items():
         text.append(f"{person}: {sum(counts.values())}; совпали {counts.get('OK', 0)}, проверить {counts.get('REVIEW', 0)}")
