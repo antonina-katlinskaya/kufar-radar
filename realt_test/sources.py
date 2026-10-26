@@ -54,7 +54,7 @@ def merge_snapshots(snapshots):
             email_who = EMAILS.get(str(row.get("contactEmail") or "").strip().lower())
             if who and email_who and who != email_who:
                 raise RuntimeError("Conflicting employee identity in Realt snapshot")
-            if not who or not (created_in_window(row.get("createdAt")) if os.getenv("REALT_CONTINUOUS") != "1" else created_since_baseline(row.get("createdAt"))):
+            if not who or (os.getenv("REALT_CONTINUOUS") != "1" and not created_in_window(row.get("createdAt"))):
                 continue
             key = str(row.get("uuid") or "")
             if not key:
@@ -68,7 +68,10 @@ def merge_snapshots(snapshots):
             selected[key] = {**row, "person": who, "last_seen_at": observed_at,
                              "first_seen_at": old["first_seen_at"] if old else observed_at,
                              "material_edits": edits}
-    return list(selected.values())
+    values = list(selected.values())
+    if os.getenv('REALT_CONTINUOUS') == '1':
+        values = [row for row in values if created_since_baseline(row.get('createdAt')) or row.get('material_edits')]
+    return values
 
 
 def load_realt():
