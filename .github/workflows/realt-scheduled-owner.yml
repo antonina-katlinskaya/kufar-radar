@@ -51,6 +51,7 @@ jobs:
       - name: Deliver to verified personal chat only
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          REALT_ACTIVATE_TWO: '1'
         run: python -m realt_test.notify
       - name: Report migration success or a paused check to owner
         if: always()
