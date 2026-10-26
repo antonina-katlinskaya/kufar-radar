@@ -44,6 +44,10 @@ jobs:
           CF_HISTORY_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
         run: python -m realt_test.run
       - name: Calculate pending reviews (dry run, no state writes)
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
         run: python -m realt_test.check_pending
       - name: Publish Realt — тест only to verified private owner
         if: github.event_name == 'workflow_dispatch'
