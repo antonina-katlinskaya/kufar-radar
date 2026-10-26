@@ -99,7 +99,7 @@ class OwnerTests(unittest.TestCase):
                     return {'message_id': 123}
                 return True
         bot = FakeBot()
-        result = audit([row()], [bir()], '2026-10-26', {})
+        result = audit([row(price='70000')], [bir()], '2026-10-26', {})
         old = os.getcwd()
         try:
             with tempfile.TemporaryDirectory() as tmp:
