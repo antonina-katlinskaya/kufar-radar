@@ -4,7 +4,7 @@ This module does not send Telegram messages. It must not be wired to the
 production Kufar workflow or shared subscription list.
 """
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 START_DATE = "2026-10-23"
 END_DATE = "2026-10-26"
@@ -35,9 +35,9 @@ def decimal_value(value):
 
 
 def area_equal(realt_area, bir_area):
-    """Compare published two-digit square-meter values, never tenths/integers."""
+    """Accept exact areas or Bir area mathematically rounded to Realt tenths."""
     a, b = decimal_value(realt_area), decimal_value(bir_area)
-    return a is not None and b is not None and a == b
+    return a is not None and b is not None and (a == b or (a.as_tuple().exponent == -1 and b.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP) == a))
 
 
 def approved_person(row, identity_map):
