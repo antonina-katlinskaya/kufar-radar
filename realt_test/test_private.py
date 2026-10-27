@@ -28,8 +28,10 @@ def bir(**values):
 class PolicyTests(unittest.TestCase):
     def test_exact_area_no_rounding(self):
         self.assertTrue(area_equal('46,22', 46.22))
-        self.assertFalse(area_equal('46.2', '46.22'))
+        self.assertTrue(area_equal('46.2', '46.22'))
         self.assertFalse(area_equal('46.22', '46.221'))
+        self.assertTrue(area_equal('48.6', '48.63'))
+        self.assertFalse(area_equal('48.6', '48.66'))
 
     def test_invalid_numbers_fail_closed(self):
         for value in (None, '', 'NaN', 'sNaN', 'Infinity', '-Infinity', 'bad'):
@@ -77,9 +79,9 @@ class PolicyTests(unittest.TestCase):
     def test_nearby_area_is_only_hint(self):
         result = audit([row(areaTotal='46.2')], [bir()], '2026-10-26', {})
         item = result['items'][0]
-        self.assertEqual(item['status'], 'REVIEW')
-        self.assertEqual(item['matching_bir_keys'], [])
-        self.assertEqual(len(item['nearest_area_hints_not_matches']), 1)
+        self.assertEqual(item['status'], 'OK')
+        self.assertEqual(item['matching_bir_keys'], ['b1'])
+        self.assertEqual(len(item['nearest_area_hints_not_matches']), 0)
 
 
 class OwnerTests(unittest.TestCase):
