@@ -168,7 +168,7 @@ def main():
         raise RuntimeError('Owner state changed; no message sent')
     if os.getenv('REALT_ACTIVATE_TWO') == '1':
         raise RuntimeError('Two-recipient activation is disabled: Realt is owner-only')
-    if False:  # Legacy activation path retained but unreachable
+    if False:  # Disabled legacy path
         db=GitHubState()
         bot=Bot(token)
         ids=[]
