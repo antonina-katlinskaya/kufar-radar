@@ -42,6 +42,7 @@ def advance(previous, snapshots):
     """Preserve disappeared/old listings, process only newer observations."""
     state = json.loads(json.dumps(previous or {"schema":2,"rows":{}}))
     rows = state["rows"]
+    state["changed_uuids"] = []
     for stamp, batch in sorted(snapshots,key=lambda x:x[0]):
         for row in batch:
             who = TRACKED.get(str(row.get("userUuid") or ""))
@@ -57,6 +58,9 @@ def advance(previous, snapshots):
             historical = list(before.get("historical_material_edits",[])) if before else []
             if before and before.get("createdAt")!=row.get("createdAt"):
                 historical.extend(edits);edits=[]
+            if not before or any(before.get(k) != row.get(k) for k in ("rooms", "areaTotal", "price", "priceCurrency", "createdAt")):
+                if uid not in state["changed_uuids"]:
+                    state["changed_uuids"].append(uid)
             if before:
                 change = material_change(before,row,row.get("observed_at") or stamp)
                 if change and change not in edits: edits.append(change)
