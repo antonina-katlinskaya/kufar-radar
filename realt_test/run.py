@@ -131,7 +131,8 @@ def run():
         rows=list(checkpoint['rows'].values())
         from realt_test.policy import created_in_window
         from realt_test.sources import created_since_baseline
-        rows=[r for r in rows if created_since_baseline(r.get('createdAt')) or r.get('material_edits')]
+        changed=set(checkpoint.get('changed_uuids', []))
+        rows=[r for r in rows if r.get('uuid') in changed and (created_since_baseline(r.get('createdAt')) or r.get('material_edits'))]
     else:
         rows, source = load_realt()
     bir, checked = load_bir_snapshot()
