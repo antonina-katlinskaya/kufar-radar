@@ -111,6 +111,7 @@ class OwnerTests(unittest.TestCase):
                 self.assertEqual(len(receipt['message_ids']), 1)
                 self.assertEqual(len(receipt['documents_sent']), 0)
                 self.assertTrue(Path('realt_test/notification_receipt.json').exists())
+                os.chdir(old)
         finally:
             os.chdir(old)
         self.assertTrue(all(str(p['chat_id']) == OWNER_ID for _, p in bot.calls))
@@ -134,6 +135,7 @@ class OwnerTests(unittest.TestCase):
                 os.chdir(tmp)
                 write_reports({**r, 'items': selected})
                 publish(r, OWNER_ID, bot, 'https://github.com/example/run', review_items=selected)
+                os.chdir(old)
         finally:
             os.chdir(old)
         msg = next(payload['text'] for method, payload in bot.calls if method == 'sendMessage')
