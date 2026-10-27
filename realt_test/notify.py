@@ -105,8 +105,10 @@ def format_card(item, bir_checked_at):
 
 def publish(result, owner, bot, run_url, review_items=None, before_send=None, after_send=None, recipient=None):
     recipient=recipient or OWNER_ID
+    if str(recipient) != OWNER_ID:
+        raise RuntimeError('Realt notifications are owner-only')
     chat=bot.call('getChat', {'chat_id': recipient})
-    target=validate_owner(owner,chat) if recipient==OWNER_ID else validate_sister(recipient,chat)
+    target=validate_owner(owner,chat)
     selected=review_items if review_items is not None else result.get('items',[])
     if not selected or not result.get('bir_checked_at'):
         raise RuntimeError('Refusing to send an empty or unchecked report')
@@ -120,7 +122,11 @@ def publish(result, owner, bot, run_url, review_items=None, before_send=None, af
         for candidate in (item.get('bir_room_area_candidates') or [])[:3]:
             uid=str(candidate.get('id') or '')
             if re.fullmatch(r'[a-fA-F0-9-]{36}',uid):
-                buttons.append([{'text':'Bir: '+str(candidate.get('house') or '')+' · кв. '+str(candidate.get('unit') or ''),'url':'https://bir.by/object/'+uid+'/'}])
+                button={'text':'Bir: '+str(candidate.get('house') or '')+' · кв. '+str(candidate.get('unit') or ''),'url':'https://bir.by/object/'+uid+'/'}
+                if buttons and len(buttons[0]) == 1:
+                    buttons[0].append(button)
+                else:
+                    buttons.append([button])
         if before_send:before_send(item)
         message=bot.call('sendMessage', {'chat_id':target,
             'text':format_card(item,result['bir_checked_at']),
@@ -161,6 +167,8 @@ def main():
     if str(owner) != OWNER_ID:
         raise RuntimeError('Owner state changed; no message sent')
     if os.getenv('REALT_ACTIVATE_TWO') == '1':
+        raise RuntimeError('Two-recipient activation is disabled: Realt is owner-only')
+    if False:  # Legacy activation path retained but unreachable
         db=GitHubState()
         bot=Bot(token)
         ids=[]
@@ -194,9 +202,8 @@ def main():
         return
     from realt_test.history import pending, acknowledge, claim
     owner_store=GitHubState()
-    sister_store=SisterHistory(owner_store)
     cases=[]
-    for label,recipient,store in [('owner',OWNER_ID,owner_store),('sister',SISTER_ID,sister_store)]:
+    for label,recipient,store in [('owner',OWNER_ID,owner_store)]:
         unsent,_=pending(store,result)
         if unsent:cases.append((label,recipient,store,unsent))
     if not cases:
