@@ -141,19 +141,6 @@ def publish(result, owner, bot, run_url, review_items=None, before_send=None, af
     return receipt
 
 
-class SisterHistory:
-    from realt_test.history import KEY, CLAIMS_KEY
-    KEYS={KEY:'realt_sister_review_fingerprints_v1', CLAIMS_KEY:'realt_sister_delivery_claims_v1'}
-    def __init__(self,store):
-        self.store=store
-        if store.get_state(self.KEYS[self.KEY]) is None:
-            store.set_state(self.KEYS[self.KEY],store.get_state(self.KEY) or '{}')
-    def get_state(self,key,default=None):
-        return self.store.get_state(self.KEYS.get(key,key),default)
-    def set_state(self,key,value):
-        return self.store.set_state(self.KEYS.get(key,key),value)
-
-
 def main():
     permitted = (os.getenv('GITHUB_REF') == 'refs/heads/' + BRANCH or (os.getenv('GITHUB_REF') == 'refs/heads/main' and os.getenv('GITHUB_WORKFLOW') == 'Realt scheduled owner-only'))
     if not permitted or os.getenv('GITHUB_REPOSITORY') != REPOSITORY:
@@ -168,18 +155,6 @@ def main():
         raise RuntimeError('Owner state changed; no message sent')
     if os.getenv('REALT_ACTIVATE_TWO') == '1':
         raise RuntimeError('Two-recipient activation is disabled: Realt is owner-only')
-    if False:  # Disabled legacy path
-        db=GitHubState()
-        bot=Bot(token)
-        ids=[]
-        for recipient in (OWNER_ID,SISTER_ID):
-            chat=bot.call('getChat',{'chat_id':recipient})
-            if recipient==OWNER_ID:validate_owner(owner,chat)
-            else:validate_sister(recipient,chat)
-            message=bot.call('sendMessage',{'chat_id':recipient,
-                'text':'🔔 Realt Radar подключён. Теперь уведомления о новых расхождениях с Bir и существенных изменениях объявлений задним числом будут приходить сюда автоматически. Старые уже отправленные случаи повторяться не будут.'})
-            ids.append(message['message_id'])
-        print(json.dumps({'activated_both':True,'message_ids':ids,'recipients_verified':2}))
     result = json.loads(Path('realt_test/results.json').read_text(encoding='utf-8'))
     if result.get('notification_paused'):
         print(json.dumps({'notification_sent':False,'reason':'Archive baseline restored; waiting for a fresh collector snapshot'}))
