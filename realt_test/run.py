@@ -148,7 +148,7 @@ def run():
                 item['reason']='Предыдущее расхождение устранено: комнаты, точная площадь и спеццена совпали'
         result['status_counts']=dict(Counter(x['status'] for x in result['items']))
         result['person_status_counts']={p:dict(Counter(x['status'] for x in result['items'] if x['person']==p)) for p in TRACKED.values()}
-        checkpoint['last_status']={x['uuid']:x['status'] for x in result['items']}
+        checkpoint['last_status']={**old_status, **{x['uuid']:x['status'] for x in result['items']}}
         checkpoint['pending_result']=result
         from realt_test.incremental import save
         save(checkpoint_db,checkpoint)
