@@ -1,5 +1,5 @@
 import {writeFileSync} from 'node:fs';
-import {scan} from './worker.mjs';
+import {scan,refreshAllDetails} from './worker.mjs';
 
 const {CF_ACCOUNT_ID, BIR_D1_DATABASE_ID, CF_D1_API_TOKEN} = process.env;
 if (!CF_ACCOUNT_ID || !BIR_D1_DATABASE_ID || !CF_D1_API_TOKEN) {
@@ -56,7 +56,8 @@ const db = {
 };
 
 const freshMinutes = Number(process.env.BIR_SKIP_IF_FRESH_MINUTES || 0);
-if (Number.isFinite(freshMinutes) && freshMinutes > 0) {
+const fullDetails = process.env.BIR_REFRESH_ALL_DETAILS === '1';
+if (!fullDetails && Number.isFinite(freshMinutes) && freshMinutes > 0) {
   const latest = (await db.prepare(
     "SELECT checked_at FROM bir_scans WHERE status='ok' ORDER BY checked_at DESC LIMIT 1"
   ).all()).results?.[0];
@@ -78,3 +79,8 @@ if (Number.isFinite(freshMinutes) && freshMinutes > 0) {
 const result = await scan({BIR_DB: db});
 console.log(JSON.stringify(result));
 if (result.ok && successfulCheckedAt) exportMeta(successfulCheckedAt);
+if (fullDetails) {
+  const details=await refreshAllDetails({BIR_DB:db});
+  console.log(JSON.stringify(details));
+  if(!details.ok) process.exitCode=1;
+}

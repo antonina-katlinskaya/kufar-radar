@@ -1,0 +1,29 @@
+name: BIR full detail refresh
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/bir-detail-nightly.yml']
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: bir-detail-full-refresh
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Refresh every active BIR detail card
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          BIR_D1_DATABASE_ID: d8dd0219-8070-4f48-980d-312eba26209e
+          BIR_REFRESH_ALL_DETAILS: '1'
+        run: node bir-history/run.mjs
