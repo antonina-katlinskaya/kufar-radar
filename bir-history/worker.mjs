@@ -41,14 +41,17 @@ export function parseRows(html) {
   for (const row of html.matchAll(/<tr\b[^>]*data-loadobject="([0-9a-f-]{36})"[^>]*>[\s\S]*?<\/tr>/gi)) {
     const cells = [...row[0].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(x => norm(x[1]));
     if (cells.length < 7 || !cells[1]) throw Error('Unexpected Bir row structure');
-    rows.push({id:row[1],house:cells[1],number:cells[0],floor:cells[3],area:cells[5],rooms:cells[6],raw_cells_json:JSON.stringify(cells),raw_html:row[0]});
+    const prices_eur=[...row[0].matchAll(/<span\b[^>]*\btprice\b[^>]*>([\s\S]*?)<\/span>/gi)]
+      .map(x=>Number(norm(x[1]).replace(/[^0-9.,]/g,'').replace(',','.')));
+    if(!prices_eur.length || prices_eur.some(x=>!Number.isFinite(x))) throw Error('Cannot verify Bir EUR prices');
+    rows.push({id:row[1],house:cells[1],number:cells[0],floor:cells[3],area:cells[5],rooms:cells[6],prices_eur,raw_cells_json:JSON.stringify(cells),raw_html:row[0]});
   }
   if (rows.length !== new Set(rows.map(x=>x.id)).size) throw Error('Duplicate Bir ID');
   return rows;
 }
 
 function listing(r, seen) {
-  return {id:r.id,house:r.house,number:r.number,area:r.area,floor:r.floor,rooms:r.rooms,raw_cells_json:r.raw_cells_json,raw_html:r.raw_html,seen_utc:seen};
+  return {id:r.id,house:r.house,number:r.number,area:r.area,floor:r.floor,rooms:r.rooms,prices_eur:r.prices_eur,raw_cells_json:r.raw_cells_json,raw_html:r.raw_html,seen_utc:seen};
 }
 
 export function parseDetail(raw, id, oldDetail) {
@@ -69,6 +72,65 @@ function event(db, id, now, scanId, type, field=null, oldValue=null, newValue=nu
 }
 async function batches(db, statements) {
   for(let i=0;i<statements.length;i+=40) await db.batch(statements.slice(i,i+40));
+}
+
+// Always advance the oldest-card queue. Listing HTML (including BYN and
+// presentation-only changes) must never restart the queue at the first 24 IDs.
+export function detailTargets(previous, seen, limit=DETAIL_LIMIT) {
+  return previous.filter(x=>seen.has(x.id))
+    .sort((a,b)=>String(a.detail_fetched_at??'').localeCompare(String(b.detail_fetched_at??'')) || a.id.localeCompare(b.id))
+    .slice(0,limit);
+}
+
+async function refreshDetail(db, old, now, scanId) {
+  const before=old.detail_json?JSON.parse(old.detail_json):null;
+  const detail=parseDetail(await bir('get-object-by-tablerow-click/',{objectid:old.id}),old.id,before);
+  if(!RESIDENTIAL.has(detail.vid)) throw Error('Previously residential ID now has non-residential type');
+  const updates=[db.prepare('UPDATE bir_objects SET detail_json=?,detail_fetched_at=? WHERE id=? AND (detail_fetched_at IS NULL OR detail_fetched_at<=?)')
+    .bind(JSON.stringify(detail),now,old.id,now)];
+  if(before) for(const key of new Set([...Object.keys(before),...Object.keys(detail)])) {
+    if(key==='image'||key==='image_metadata'||key==='catalog_checked_at'||/byn$/i.test(key)) continue;
+    if(JSON.stringify(before[key]??null)!==JSON.stringify(detail[key]??null))
+      updates.push(event(db,old.id,now,scanId,'detail_changed',key,JSON.stringify(before[key]??null),JSON.stringify(detail[key]??null)));
+  }
+  await batches(db,updates);
+}
+
+// Runs in GitHub Actions, outside the Workers free-plan subrequest budget.
+// Every active card is fetched; failed requests leave the previous record and
+// timestamp untouched and fail the job, rather than reporting a successful sweep.
+export async function refreshAllDetails(env) {
+  const db=env.BIR_DB, startedAt=new Date().toISOString(), scanId=crypto.randomUUID();
+  const rows=(await db.prepare('SELECT * FROM bir_objects WHERE present=1').all()).results;
+  let cursor=0, details=0; let errors=[]; let quotaStopped=false;
+  await db.prepare('INSERT OR REPLACE INTO service_state(key,value,updated_at) VALUES(?,?,?)')
+    .bind('bir_detail_refresh',JSON.stringify({status:'running',startedAt,total:rows.length}),startedAt).run();
+  await Promise.all(Array.from({length:4},async()=>{
+    while(cursor<rows.length) {
+      const old=rows[cursor++];
+      try { await refreshDetail(db,old,new Date().toISOString(),scanId); details++; }
+      catch(error) {
+        // Stop issuing requests on a quota failure. Other errors are retried by
+        // the next oldest-first scan, and remain visible in the failed job.
+        errors.push({id:old.id,error:String(error)});
+        if(/quota|daily.*limit|free tier|write budget/i.test(String(error))) {cursor=rows.length;quotaStopped=true;}
+      }
+      if(details && details%100===0) console.log(JSON.stringify({detailProgress:details,total:rows.length}));
+    }
+  }));
+  // Retry only failed IDs. Do not restart the whole sweep or spin on a quota.
+  if(!quotaStopped && errors.length) {
+    const failed=new Set(errors.map(e=>e.id)); errors=[];
+    for(const old of rows.filter(r=>failed.has(r.id))) {
+      try {await refreshDetail(db,old,new Date().toISOString(),scanId);details++;}
+      catch(error) {errors.push({id:old.id,error:String(error)});if(/quota|daily.*limit|free tier|write budget/i.test(String(error))){quotaStopped=true;break;}}
+    }
+  }
+  const verify=(await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN detail_fetched_at IS NOT NULL AND julianday(detail_fetched_at)>=julianday(?) THEN 1 ELSE 0 END) fresh FROM bir_objects WHERE present=1").bind(startedAt).all()).results[0];
+  const result={ok:!quotaStopped&&verify.total>0&&verify.fresh===verify.total,scanId,startedAt,finishedAt:new Date().toISOString(),total:rows.length,details,activeTotal:verify.total,activeFresh:verify.fresh,quotaStopped,errors};
+  await db.prepare('INSERT OR REPLACE INTO service_state(key,value,updated_at) VALUES(?,?,?)')
+    .bind('bir_detail_refresh',JSON.stringify({...result,status:result.ok?'ok':'failed'}),result.finishedAt).run();
+  return result;
 }
 
 export async function scan(env) {
@@ -98,7 +160,6 @@ export async function scan(env) {
     if(parsed < active * 0.9) throw Error(`Suspicious drop: rows=${parsed}, active=${active}`);
     const seen=new Set();
     const writes=[];let appeared=0, changed=0, excludedNew=0;
-    const refresh=[];
     for(const r of rows) {
       if(excluded.has(r.id)) continue;
       const old=byId.get(r.id);
@@ -129,7 +190,6 @@ export async function scan(env) {
         if(!deltas.length && htmlChanged) writes.push(event(db,r.id,now,scanId,'listing_changed','raw_html'));
         if(!old.present) writes.push(event(db,r.id,now,scanId,'returned'));
         changed++;
-        if(deltas.length || htmlChanged) refresh.push(r);
       }
     }
     for(const old of previous) if(!seen.has(old.id)) {
@@ -139,26 +199,12 @@ export async function scan(env) {
       if(misses===2 && old.present) writes.push(event(db,old.id,now,scanId,'disappeared_from_listing'));
     }
     await batches(db,writes);
-    // Refresh changed cards first, then the stalest details. All fields remain in detail_json.
-    const refreshIds=new Set(refresh.map(x=>x.id));
-    const periodic=previous.filter(x=>seen.has(x.id)&&!refreshIds.has(x.id))
-      .sort((a,b)=>String(a.detail_fetched_at??'').localeCompare(String(b.detail_fetched_at??'')) ||
-        Number(JSON.parse(a.listing_json).area)-Number(JSON.parse(b.listing_json).area));
-    const targets=[...refresh,...periodic.map(x=>({id:x.id}))].slice(0,DETAIL_LIMIT);
+    const targets=detailTargets(previous,seen);
     let details=0,detailErrors=0;
     for(const r of targets) {
       const old=byId.get(r.id);
       try {
-        const before=old?.detail_json?JSON.parse(old.detail_json):null;
-        const detail=parseDetail(await bir('get-object-by-tablerow-click/',{objectid:r.id}),r.id,before);
-        if(!RESIDENTIAL.has(detail.vid)) throw Error('Previously residential ID now has non-residential type');
-        const updates=[db.prepare('UPDATE bir_objects SET detail_json=?,detail_fetched_at=? WHERE id=?').bind(JSON.stringify(detail),now,r.id)];
-        if(before) for(const key of new Set([...Object.keys(before),...Object.keys(detail)])) {
-          if(key==='image'||key==='image_metadata') continue;
-          if(JSON.stringify(before[key]??null)!==JSON.stringify(detail[key]??null))
-            updates.push(event(db,r.id,now,scanId,'detail_changed',key,JSON.stringify(before[key]??null),JSON.stringify(detail[key]??null)));
-        }
-        await batches(db,updates); details++;
+        await refreshDetail(db,old,now,scanId); details++;
       } catch(_) { detailErrors++; }
     }
     await log('ok',detailErrors?`Detail retries needed: ${detailErrors}`:null);
