@@ -157,7 +157,10 @@ def main():
         raise RuntimeError('Two-recipient activation is disabled: Realt is owner-only')
     result = json.loads(Path('realt_test/results.json').read_text(encoding='utf-8'))
     if result.get('notification_paused'):
-        print(json.dumps({'notification_sent':False,'reason':'Archive baseline restored; waiting for a fresh collector snapshot'}))
+        print(json.dumps({'notification_sent':False,'reason':(
+            'Stale Realt source; new price notifications blocked'
+            if result.get('source_stale') else
+            'Archive baseline restored; waiting for a fresh collector snapshot')}))
         return
     if result.get('budget_paused') is not None:
         budget=result['budget_paused']

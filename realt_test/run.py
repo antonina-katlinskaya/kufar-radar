@@ -66,9 +66,25 @@ def audit(rows, bir, bir_checked, source):
     }
 
 
+def stale_source_report(source):
+    """Never replay earlier pending reviews against an expired Realt observation."""
+    return {
+        'items': [], 'tracked_people': list(TRACKED.values()),
+        'person_status_counts': {}, 'checked': 0, 'bir_checked_at': '',
+        'status_counts': {}, 'source': source, 'source_stale': True,
+        'notification_paused': True,
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+        'coverage_warning': (
+            'Последний полный снимок Realt устарел. Новые сверки и ценовые '
+            'уведомления приостановлены до получения свежего снимка. '
+            'Время последнего снимка: ' + str(source.get('latest_snapshot_at') or 'неизвестно')
+        ),
+    }
+
+
 def write_reports(result):
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.with_name('diagnostics.json').write_text(json.dumps({k:result.get(k) for k in ('checked_at','checked','bir_checked_at','status_counts','source','notification_paused')},ensure_ascii=False),encoding='utf-8')
+    OUT.with_name('diagnostics.json').write_text(json.dumps({k:result.get(k) for k in ('checked_at','checked','bir_checked_at','status_counts','source','source_stale','notification_paused')},ensure_ascii=False),encoding='utf-8')
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     fields = ['person', 'code', 'created_at', 'area', 'rooms', 'price', 'currency', 'status', 'reason', 'address', 'floor', 'url', 'present_in_latest_snapshot', 'first_seen_at', 'last_seen_at']
     with OUT.with_suffix('.csv').open('w', encoding='utf-8-sig', newline='') as f:
@@ -120,6 +136,11 @@ def run():
             print(json.dumps({'budget_paused':pause.budget},ensure_ascii=False))
             return
         if source['unchanged']:
+            if source.get('source_stale'):
+                write_reports(stale_source_report(source))
+                print(json.dumps({'source_unchanged': True, 'source_stale': True,
+                                  'new_snapshot_processed': False, 'notification_paused': True}))
+                return
             if previous.get('pending_result'):
                 write_reports(previous['pending_result'])
             else:
