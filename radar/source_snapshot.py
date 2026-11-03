@@ -57,12 +57,9 @@ def latest_bir_scan(db):
 # cards are refreshed only 24 at a time and may retain old non-promotional prices.
 # In particular, 'Акция 2026' can override the old Rassrochka10_cena value.
 # Select the GREEN TOTAL EUR price cell, not the green EUR/m2 cell.
-_BIR_CELL_RE = re.compile(r'<td\\b([^>]*)>(.*?)</td\\s*>', re.I | re.S)
-_BIR_TPRICE_RE = re.compile(
-    r'<span\\b[^>]*class=["\\\'][^"\\\']*\\btprice\\b[^"\\\']*["\\\'][^>]*>(.*?)</span\\s*>',
-    re.I | re.S,
-)
-_BIR_EUR_RE = re.compile(r'(\\d[\\d\\s.,]*)\\s*€')
+_BIR_CELL_RE = re.compile(r'<td\b([^>]*)>(.*?)</td\s*>', re.I | re.S)
+_BIR_TPRICE_RE = re.compile(r'<span\b[^>]*\btprice\b[^>]*>(.*?)</span\s*>', re.I | re.S)
+_BIR_EUR_RE = re.compile(r'(\d[\d\s.,]*)\s*€')
 
 
 def current_bir_special_price(listing, object_id='unknown'):
@@ -74,13 +71,13 @@ def current_bir_special_price(listing, object_id='unknown'):
     html = listing.get('raw_html') or ''
     found = []
     for attrs, body in _BIR_CELL_RE.findall(html):
-        if not re.search(r'\\bitem__price\\b', attrs, re.I):
+        if not re.search(r'\bitem__price\b', attrs, re.I):
             continue
-        if not re.search(r'\\bflat\\b', attrs, re.I):
+        if not re.search(r'\bflat\b', attrs, re.I):
             continue
         if '#007952' not in attrs.lower():
             continue
-        if re.search(r'\\bcolumnMobHidden\\b', attrs, re.I):
+        if re.search(r'\bcolumnMobHidden\b', attrs, re.I):
             continue
         prices = _BIR_TPRICE_RE.findall(body)
         if len(prices) != 1:
