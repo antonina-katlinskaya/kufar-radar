@@ -10,13 +10,12 @@ from .store import save_kufar, save_bir, current_kufar
 from .source_snapshot import history_db, load_bir_snapshot, load_kufar_profile_snapshot
 from .audit import AuditSession, ignored_area_violation
 from .matcher import area_close
+from .navigation import CURRENT_BUTTON, MAIN_KEYBOARD, ensure_navigation
 
 MINSK=ZoneInfo('Europe/Minsk')
-CURRENT_BUTTON='📋 Актуальные нарушения'
 CHECK_BUTTON='🔄 Проверить сейчас'
 AMBIGUOUS_BUTTON='⚠️ Неоднозначные случаи'
-MAIN_KEYBOARD=[[CURRENT_BUTTON]]
-# Versioned state deliberately forces a one-time keyboard refresh for all subscribers.
+# Legacy marker retained for /start compatibility; navigation retries are per-chat.
 KEYBOARD_STATE='telegram_main_keyboard_v11_pinned_fallback_sent'
 CONTROL_PANEL_STATE_PREFIX='telegram_control_panel_v1_'
 SUBSCRIBERS_STATE='telegram_chat_ids_v1'
@@ -1176,12 +1175,12 @@ async def run():
     force_chats,show_chats,review_chats,joined_chats=process_updates(db,tg)
     auto_chats=automatic_chat_ids(db)
     owner=db.get_state('telegram_chat_id')
-    install_keyboard=bool(auto_chats and db.get_state(KEYBOARD_STATE,'')!='1')
 
     # Telegram may hide a persistent reply keyboard client-side. Keep a second,
     # pinned control panel alive independently of violation count or chat cleanup.
     for chat in auto_chats:
         ensure_control_panel(db,tg,chat)
+        ensure_navigation(db,tg,chat)
 
     if owner and db.get_state(INVITE_NOTICE_STATE,'')!='1':
         try:
@@ -1365,18 +1364,6 @@ async def run():
             send_review_summary(db,tg,chat)
         except Exception as exc:
             print(f'TELEGRAM_SEND_ERROR chat={chat} type={type(exc).__name__} detail={exc}')
-
-    if auto_chats and install_keyboard and not force_chats and not show_chats and not review_chats and not joined_chats:
-        restored=False
-        for chat in auto_chats:
-            restored=safe_send(
-              tg,chat,
-              '📋 Кнопка «Актуальные нарушения» показывает все незакрытые случаи. '
-              'Новые нарушения приходят автоматически.',
-              reply_keyboard=MAIN_KEYBOARD
-            ) or restored
-        if restored:
-            db.set_state(KEYBOARD_STATE,'1')
 
 if __name__=='__main__':
     try:

@@ -5,6 +5,23 @@ class Telegram:
     def __init__(self):
         if not settings.telegram_token: raise RuntimeError('TELEGRAM_BOT_TOKEN missing')
         self.base=f'https://api.telegram.org/bot{settings.telegram_token}'
+    def call(self,method,payload):
+        r=httpx.post(self.base+'/'+method,json=payload,timeout=30)
+        try:data=r.json()
+        except ValueError:raise RuntimeError(f'Telegram {method}: invalid response (HTTP {r.status_code})') from None
+        if not r.is_success or not data.get('ok'):
+            raise RuntimeError(f'Telegram {method}: {data.get("description") or r.status_code}')
+        return data
+    def configure_navigation(self,chat_id):
+        scope={'type':'chat','chat_id':chat_id}
+        commands=[{'command':'violations','description':'Актуальные нарушения'},
+                  {'command':'start','description':'Вернуть кнопку радара'}]
+        self.call('setMyCommands',{'scope':scope,'commands':commands})
+        self.call('setChatMenuButton',{'chat_id':chat_id,'menu_button':{'type':'commands'}})
+        menu=self.call('getChatMenuButton',{'chat_id':chat_id})['result']
+        saved=self.call('getMyCommands',{'scope':scope})['result']
+        if menu.get('type')!='commands' or not any(c.get('command')=='violations' for c in saved):
+            raise RuntimeError('Telegram navigation verification failed')
     def get_updates(self,offset=None):
         p={'timeout':0,'allowed_updates':['message','callback_query']}
         if offset is not None: p['offset']=offset
@@ -22,9 +39,11 @@ class Telegram:
               'keyboard':reply_keyboard,
               'resize_keyboard':True,
               'is_persistent':True,
+              'one_time_keyboard':False,
+              'input_field_placeholder':'Нарушения: кнопка или /violations',
             }
         if parse_mode: payload['parse_mode']=parse_mode
-        r=httpx.post(self.base+'/sendMessage',json=payload,timeout=30); r.raise_for_status(); return r.json()
+        return self.call('sendMessage',payload)
     def photo(self,chat_id,path,caption=''):
         with open(path,'rb') as f:
             r=httpx.post(self.base+'/sendPhoto',data={'chat_id':chat_id,'caption':caption[:1024]},files={'photo':f},timeout=60)
