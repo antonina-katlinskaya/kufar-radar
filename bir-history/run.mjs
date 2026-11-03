@@ -9,10 +9,13 @@ if (!CF_ACCOUNT_ID || !BIR_D1_DATABASE_ID || !CF_D1_API_TOKEN) {
 const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT_ID)}/d1/database/${encodeURIComponent(BIR_D1_DATABASE_ID)}/query`;
 
 let successfulCheckedAt = null;
+let rowsWritten=0,rowsRead=0;
 function exportMeta(checked_at) {
   if (process.env.BIR_EXPORT_META_PATH) writeFileSync(process.env.BIR_EXPORT_META_PATH, JSON.stringify({ok:true,checked_at}));
 }
 async function query(statements) {
+  if (process.env.BIR_REFRESH_ALL_DETAILS === '1' && rowsWritten >= 25000 && statements.some(s=>!/^SELECT|^INSERT OR REPLACE INTO service_state/i.test(s.sql)))
+    throw Error('Nightly D1 write budget reached (25000 rows); waiting for next run');
   const payload = statements.length === 1
     ? {sql: statements[0].sql, params: statements[0].params}
     : {batch: statements.map(({sql, params}) => ({sql, params}))};
@@ -34,6 +37,7 @@ async function query(statements) {
     if (statement.sql.startsWith('INSERT INTO bir_scans(') && statement.params?.[5] === 'ok')
       successfulCheckedAt = statement.params[2];
   }
+  for(const r of body.result) {rowsWritten+=r.meta?.rows_written??0;rowsRead+=r.meta?.rows_read??0;}
   return body.result;
 }
 
@@ -82,5 +86,6 @@ if (result.ok && successfulCheckedAt) exportMeta(successfulCheckedAt);
 if (fullDetails) {
   const details=await refreshAllDetails({BIR_DB:db});
   console.log(JSON.stringify(details));
+  console.log(JSON.stringify({nightlyUsage:{rowsWritten,rowsRead}}));
   if(!details.ok) process.exitCode=1;
 }

@@ -26,7 +26,7 @@ test('missing cards never enter refresh queue; null timestamps come first',()=>{
 test('nightly refresh replaces validated detail, preserves old data on wrong ID and reports failure',async()=>{
   const original=globalThis.fetch;
   const writes=[];
-  const db={prepare(sql){return {all:async()=>({results:[{id:'good',detail_json:'{}'},{id:'bad',detail_json:'{}'}]}),bind(...params){return {run:async()=>{writes.push({sql,params});},statement:{sql,params}};}};},batch:async(statements)=>{writes.push(...statements.map(s=>s.statement));}};
+  const db={prepare(sql){return {all:async()=>({results:[{id:'good',detail_json:'{}'},{id:'bad',detail_json:'{}'}]}),bind(...params){return {all:async()=>({results:[{total:2,fresh:1}]}),run:async()=>{writes.push({sql,params});},statement:{sql,params}};}};},batch:async(statements)=>{writes.push(...statements.map(s=>s.statement));}};
   globalThis.fetch=async(_url,args)=>new Response(JSON.stringify({id:new URLSearchParams(args.body).get('objectid')==='good'?'good':'wrong',object:'Minsk World',vid:'Квартира',Rassrochka10_cena:66540}));
   try {
     const result=await refreshAllDetails({BIR_DB:db});

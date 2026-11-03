@@ -89,7 +89,7 @@ async function refreshDetail(db, old, now, scanId) {
   const updates=[db.prepare('UPDATE bir_objects SET detail_json=?,detail_fetched_at=? WHERE id=? AND (detail_fetched_at IS NULL OR detail_fetched_at<=?)')
     .bind(JSON.stringify(detail),now,old.id,now)];
   if(before) for(const key of new Set([...Object.keys(before),...Object.keys(detail)])) {
-    if(key==='image'||key==='image_metadata') continue;
+    if(key==='image'||key==='image_metadata'||key==='catalog_checked_at'||/byn$/i.test(key)) continue;
     if(JSON.stringify(before[key]??null)!==JSON.stringify(detail[key]??null))
       updates.push(event(db,old.id,now,scanId,'detail_changed',key,JSON.stringify(before[key]??null),JSON.stringify(detail[key]??null)));
   }
@@ -102,7 +102,7 @@ async function refreshDetail(db, old, now, scanId) {
 export async function refreshAllDetails(env) {
   const db=env.BIR_DB, startedAt=new Date().toISOString(), scanId=crypto.randomUUID();
   const rows=(await db.prepare('SELECT * FROM bir_objects WHERE present=1').all()).results;
-  let cursor=0, details=0; const errors=[];
+  let cursor=0, details=0; let errors=[]; let quotaStopped=false;
   await db.prepare('INSERT OR REPLACE INTO service_state(key,value,updated_at) VALUES(?,?,?)')
     .bind('bir_detail_refresh',JSON.stringify({status:'running',startedAt,total:rows.length}),startedAt).run();
   await Promise.all(Array.from({length:4},async()=>{
@@ -113,12 +113,21 @@ export async function refreshAllDetails(env) {
         // Stop issuing requests on a quota failure. Other errors are retried by
         // the next oldest-first scan, and remain visible in the failed job.
         errors.push({id:old.id,error:String(error)});
-        if(/quota|daily.*limit|free tier/i.test(String(error))) cursor=rows.length;
+        if(/quota|daily.*limit|free tier|write budget/i.test(String(error))) {cursor=rows.length;quotaStopped=true;}
       }
       if(details && details%100===0) console.log(JSON.stringify({detailProgress:details,total:rows.length}));
     }
   }));
-  const result={ok:details===rows.length&&errors.length===0,scanId,startedAt,finishedAt:new Date().toISOString(),total:rows.length,details,errors};
+  // Retry only failed IDs. Do not restart the whole sweep or spin on a quota.
+  if(!quotaStopped && errors.length) {
+    const failed=new Set(errors.map(e=>e.id)); errors=[];
+    for(const old of rows.filter(r=>failed.has(r.id))) {
+      try {await refreshDetail(db,old,new Date().toISOString(),scanId);details++;}
+      catch(error) {errors.push({id:old.id,error:String(error)});if(/quota|daily.*limit|free tier|write budget/i.test(String(error))){quotaStopped=true;break;}}
+    }
+  }
+  const verify=(await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN detail_fetched_at IS NOT NULL AND julianday(detail_fetched_at)>=julianday(?) THEN 1 ELSE 0 END) fresh FROM bir_objects WHERE present=1").bind(startedAt).all()).results[0];
+  const result={ok:!quotaStopped&&verify.total>0&&verify.fresh===verify.total,scanId,startedAt,finishedAt:new Date().toISOString(),total:rows.length,details,activeTotal:verify.total,activeFresh:verify.fresh,quotaStopped,errors};
   await db.prepare('INSERT OR REPLACE INTO service_state(key,value,updated_at) VALUES(?,?,?)')
     .bind('bir_detail_refresh',JSON.stringify({...result,status:result.ok?'ok':'failed'}),result.finishedAt).run();
   return result;
