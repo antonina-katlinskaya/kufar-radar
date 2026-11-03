@@ -92,6 +92,7 @@ STRICT_BACKFILL_CLEANUP_STATE='strict_address_v2_cleanup_done'
 STRICT_BACKFILL_CUTOFF='2026-09-24T13:05:00+00:00'
 RELIABLE_VERSIONS_CUTOFF='2026-09-24T13:01:00+00:00'
 AUDIT_POLICY_RECHECK_STATE='strict_tuple_policy_v1_recheck_done'
+BIR_CURRENT_SPECIAL_PRICE_STATE='bir_current_listing_special_price_v1_rebuilt'
 REAPPEARED_FALSE_ALERT_CLEANUP_STATE='reappeared_false_alert_cleanup_v1'
 AUDIT_BATCH_LIMIT=200
 ACTIONABLE_FIELDS={'price','area','rooms','existence','combination'}
@@ -572,12 +573,17 @@ async def collect_bir(db,force=False):
     source=history_db()
     items,checked_at=load_bir_snapshot(source)
     last=db.get_state('last_bir_success')
-    if not force and last and checked_at and str(last)==str(checked_at):
+    # The first deployment of the current-listing price source must rebuild the
+    # operational BIR snapshot even when the upstream scan timestamp is unchanged.
+    # Without this one-time migration the old detail-card prices survive in D1.
+    price_source_ready=db.get_state(BIR_CURRENT_SPECIAL_PRICE_STATE,'')=='1'
+    if not force and price_source_ready and last and checked_at and str(last)==str(checked_at):
         return False
     save_bir(db,items)
     db.set_state('last_bir_success',str(checked_at or datetime.now(timezone.utc).isoformat()))
     db.set_state('last_bir_count',str(len(items)))
     db.set_state('last_bir_source','bir-history-residential')
+    db.set_state(BIR_CURRENT_SPECIAL_PRICE_STATE,'1')
     return True
 
 async def collect_kufar(db,profile):
