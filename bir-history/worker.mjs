@@ -41,14 +41,17 @@ export function parseRows(html) {
   for (const row of html.matchAll(/<tr\b[^>]*data-loadobject="([0-9a-f-]{36})"[^>]*>[\s\S]*?<\/tr>/gi)) {
     const cells = [...row[0].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(x => norm(x[1]));
     if (cells.length < 7 || !cells[1]) throw Error('Unexpected Bir row structure');
-    rows.push({id:row[1],house:cells[1],number:cells[0],floor:cells[3],area:cells[5],rooms:cells[6],raw_cells_json:JSON.stringify(cells),raw_html:row[0]});
+    const prices_eur=[...row[0].matchAll(/<span\b[^>]*\btprice\b[^>]*>([\s\S]*?)<\/span>/gi)]
+      .map(x=>Number(norm(x[1]).replace(/[^0-9.,]/g,'').replace(',','.')));
+    if(!prices_eur.length || prices_eur.some(x=>!Number.isFinite(x))) throw Error('Cannot verify Bir EUR prices');
+    rows.push({id:row[1],house:cells[1],number:cells[0],floor:cells[3],area:cells[5],rooms:cells[6],prices_eur,raw_cells_json:JSON.stringify(cells),raw_html:row[0]});
   }
   if (rows.length !== new Set(rows.map(x=>x.id)).size) throw Error('Duplicate Bir ID');
   return rows;
 }
 
 function listing(r, seen) {
-  return {id:r.id,house:r.house,number:r.number,area:r.area,floor:r.floor,rooms:r.rooms,raw_cells_json:r.raw_cells_json,raw_html:r.raw_html,seen_utc:seen};
+  return {id:r.id,house:r.house,number:r.number,area:r.area,floor:r.floor,rooms:r.rooms,prices_eur:r.prices_eur,raw_cells_json:r.raw_cells_json,raw_html:r.raw_html,seen_utc:seen};
 }
 
 export function parseDetail(raw, id, oldDetail) {
@@ -148,7 +151,6 @@ export async function scan(env) {
     if(parsed < active * 0.9) throw Error(`Suspicious drop: rows=${parsed}, active=${active}`);
     const seen=new Set();
     const writes=[];let appeared=0, changed=0, excludedNew=0;
-    const refresh=[];
     for(const r of rows) {
       if(excluded.has(r.id)) continue;
       const old=byId.get(r.id);
@@ -179,7 +181,6 @@ export async function scan(env) {
         if(!deltas.length && htmlChanged) writes.push(event(db,r.id,now,scanId,'listing_changed','raw_html'));
         if(!old.present) writes.push(event(db,r.id,now,scanId,'returned'));
         changed++;
-        if(deltas.length || htmlChanged) refresh.push(r);
       }
     }
     for(const old of previous) if(!seen.has(old.id)) {

@@ -1,6 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {detailTargets,refreshAllDetails} from './worker.mjs';
+import {detailTargets,refreshAllDetails,parseRows} from './worker.mjs';
+
+test('catalog EUR signature excludes BYN recalculations',()=>{
+  const html=by=>`<tr data-loadobject="25b23ad0-a8a8-47ee-8c03-bda52db2bf6e"><td>528</td><td>24.2.2</td><td>x</td><td>4</td><td>1с</td><td>49.62</td><td>1</td><td><p>${by} BYN</p><span class="tprice">66 540 €</span></td></tr>`;
+  assert.deepEqual(parseRows(html(123))[0].prices_eur,[66540]);
+  assert.deepEqual(parseRows(html(456))[0].prices_eur,[66540]);
+});
 
 test('repeated listing changes cannot starve oldest cards',()=>{
   const rows=Array.from({length:60},(_,i)=>({id:String(i).padStart(3,'0'),detail_fetched_at:i<24?'2026-11-03':'2026-09-28'}));
