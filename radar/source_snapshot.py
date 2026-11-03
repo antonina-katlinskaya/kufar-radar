@@ -1,4 +1,5 @@
-import json, os
+import json, os, re
+from html import unescape
 from datetime import datetime, timezone, timedelta
 
 from .d1 import D1
@@ -52,6 +53,53 @@ def latest_bir_scan(db):
     return row
 
 
+# The BIR search table is refreshed at every successful scan; apartment detail
+# cards are refreshed only 24 at a time and may retain old non-promotional prices.
+# In particular, 'Акция 2026' can override the old Rassrochka10_cena value.
+# Select the GREEN TOTAL EUR price cell, not the green EUR/m2 cell.
+_BIR_CELL_RE = re.compile(r'<td\b([^>]*)>(.*?)</td\s*>', re.I | re.S)
+_BIR_TPRICE_RE = re.compile(r'<span\b[^>]*\btprice\b[^>]*>(.*?)</span\s*>', re.I | re.S)
+_BIR_EUR_RE = re.compile(r'(\d[\d\s.,]*)\s*€')
+
+
+def current_bir_special_price(listing, object_id='unknown'):
+    """Read the latest fast-payment EUR price from a verified BIR table row.
+
+    Fail closed if the structure is unrecognized. Falling back to a stale detail
+    price could generate false accusations of absent room/area/price tuples.
+    """
+    html = listing.get('raw_html') or ''
+    found = []
+    for attrs, body in _BIR_CELL_RE.findall(html):
+        if not re.search(r'\bitem__price\b', attrs, re.I):
+            continue
+        if not re.search(r'\bflat\b', attrs, re.I):
+            continue
+        if '#007952' not in attrs.lower():
+            continue
+        if re.search(r'\bcolumnMobHidden\b', attrs, re.I):
+            continue
+        prices = _BIR_TPRICE_RE.findall(body)
+        if len(prices) != 1:
+            continue
+        displayed = unescape(re.sub(r'<[^>]+>', '', prices[0]))
+        match = _BIR_EUR_RE.search(displayed)
+        if not match:
+            continue
+        try:
+            amount = float(''.join(match.group(1).split()).replace(',', '.'))
+        except ValueError:
+            continue
+        found.append(amount)
+
+    if len(found) != 1:
+        raise RuntimeError(
+            f'Cannot verify current BIR special EUR price for {object_id}: '
+            f'found {len(found)} eligible total-price cells'
+        )
+    return found[0]
+
+
 def load_bir_snapshot(db):
     scan = latest_bir_scan(db)
     rows = db.query(
@@ -73,6 +121,9 @@ def load_bir_snapshot(db):
         raw['history_listing'] = listing
         raw['detail_fetched_at'] = row.get('detail_fetched_at')
         raw['source'] = 'bir-history-residential'
+        raw['detail_special_price_eur'] = detail.get('Rassrochka10_cena')
+        current_special = current_bir_special_price(listing, str(row['id']))
+        raw['special_price_source'] = 'current_bir_listing'
 
         items.append(BirListing(
             object_key=str(row['id']),
@@ -86,7 +137,7 @@ def load_bir_snapshot(db):
                 else None
             ),
             price_regular_eur=detail.get('cena'),
-            price_fast_eur=detail.get('Rassrochka10_cena'),
+            price_fast_eur=current_special,
             area=detail.get('obschPloschad'),
             rooms=detail.get('comnat'),
             floor=detail.get('etaj'),
