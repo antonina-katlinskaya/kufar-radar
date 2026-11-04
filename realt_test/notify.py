@@ -92,9 +92,16 @@ def format_card(item, bir_checked_at):
             lines.append(f"⚠️ {esc(change['field'])}: {esc(change['before'])} → {esc(change['after'])}")
     timestamps = []
     if date(item.get('created_at')):
-        timestamps.append('Realt ' + date(item['created_at']))
+        timestamps.append('публикация Realt ' + date(item['created_at']))
+    # The time of a detected edit is an observation, not the actual edit timestamp.
+    edit_times = [date(edit.get('observed_at')) for edit in (item.get('material_edits') or [])]
+    edit_times = [value for value in edit_times if value]
+    if edit_times:
+        timestamps.append('правка замечена ' + max(edit_times))
+    elif date(item.get('last_seen_at')):
+        timestamps.append('снимок Realt ' + date(item['last_seen_at']))
     if date(item.get('radar_checked_at')):
-        timestamps.append('радар ' + date(item['radar_checked_at']))
+        timestamps.append('проверка радара ' + date(item['radar_checked_at']))
     if date(bir_checked_at):
         timestamps.append('BIR ' + date(bir_checked_at))
     if timestamps:
