@@ -2,6 +2,9 @@ import json, hashlib
 from datetime import datetime, timezone
 from .models import KufarListing, BirListing
 
+class InvalidKufarSnapshot(RuntimeError):
+    """The incoming profile snapshot failed the existing size guard."""
+
 def now(): return datetime.now(timezone.utc).isoformat()
 def fp(v): return hashlib.sha256(json.dumps(v,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 
@@ -141,7 +144,7 @@ def save_kufar(db,items,profile_id):
     cur=load_current_kufar(db,profile_id); ts=now(); changed=[]; seen=set(); stm=[]
     prev_active=sum(1 for r in cur.values() if r.get('active'))
     if prev_active>=50 and len(items)<int(prev_active*0.70):
-        raise RuntimeError(f'Invalid Kufar snapshot: got {len(items)}, previous active {prev_active}')
+        raise InvalidKufarSnapshot(f'Invalid Kufar snapshot: got {len(items)}, previous active {prev_active}')
 
     for x in items:
         seen.add(x.ad_id)
