@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse
 from .config import settings, KUFAR_PROFILES
 from .d1 import D1
 from .telegram import Telegram
-from .store import save_kufar, save_bir, current_kufar
+from .store import save_kufar, save_bir, current_kufar, InvalidKufarSnapshot
 from .source_snapshot import history_db, load_bir_snapshot, load_kufar_profile_snapshot
 from .audit import AuditSession, ignored_area_violation
 from .matcher import area_close
@@ -598,7 +598,13 @@ async def collect_kufar(db,profile):
         items=current_kufar(db,profile_id)
         print(f'KUFAR_BRIDGE_PENDING profile={profile_id} detail={exc}')
         return items,[],previous_active
-    changed=save_kufar(db,items,profile_id)
+    try:
+        changed=save_kufar(db,items,profile_id)
+    except InvalidKufarSnapshot as exc:
+        # Preserve the working snapshot and its freshness. Returning no items
+        # also excludes this profile from fresh and pending audits this run.
+        print(f'::warning::KUFAR_SNAPSHOT_REJECTED profile={profile_id}: {exc}; profile audit skipped')
+        return [],[],previous_active
     checked_at=state.get('last_success_at') or datetime.now(timezone.utc).isoformat()
     db.set_state('last_kufar_success',str(checked_at))
     db.set_state(f'last_kufar_count:{profile_id}',str(len(items)))
