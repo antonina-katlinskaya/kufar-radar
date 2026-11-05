@@ -16,4 +16,5 @@ jobs:
       - run: node --check bir-history/worker.mjs
       - run: node --check bir-history/run.mjs
       - run: node --check cloudflare-bridge/worker.mjs
+      - run: node --test cloudflare-bridge/attribution.test.mjs
       - run: node --check cloudflare-bridge/run.mjs
