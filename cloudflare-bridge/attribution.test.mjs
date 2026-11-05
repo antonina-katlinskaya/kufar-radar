@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { shouldRepairAnastasiaOwner } from './worker.mjs';
 
-test("Anastasia's observed ads recover from synthetic market account profiles', () => {
+test("Anastasia's observed ads recover from synthetic market account profiles", () => {
   assert.equal(shouldRepairAnastasiaOwner('account:some-id','8517496'),true);
   assert.equal(shouldRepairAnastasiaOwner('account:another-id',8517496),true);
 });
