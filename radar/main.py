@@ -288,7 +288,7 @@ def add_subscriber(db,chat_id):
         db.set_state(SUBSCRIBERS_STATE,json.dumps(values,separators=(',',':')))
     return values
 
-def ensure_control_panel(db,tg,chat_id):
+def ensure_control_panel(db,tg,chat_id,*,now=None):
     """Keep an always-available pinned fallback for the main radar action.
 
     Telegram clients can hide a reply keyboard locally even when is_persistent=True.
@@ -303,7 +303,8 @@ def ensure_control_panel(db,tg,chat_id):
         return True
 
     # Automatic panel restoration must not wake subscribers at night.
-    if not 8 <= datetime.now(MINSK).hour < 22:
+    local_now = (now or datetime.now(MINSK)).astimezone(MINSK)
+    if not 8 <= local_now.hour < 22:
         return False
 
     try:
