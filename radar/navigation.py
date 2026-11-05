@@ -25,7 +25,7 @@ def ensure_navigation(db,tg,chat_id,*,now=None,force=False):
             db.set_state(key,json.dumps(state,separators=(',',':')))
         except Exception as exc:
             print(f'TELEGRAM_NAV_MENU_ERROR type={type(exc).__name__}')
-    if force or (7<=now.hour<23 and state.get('keyboard_date')!=today):
+    if force or (8<=now.hour<22 and state.get('keyboard_date')!=today):
         try:
             response=tg.send(chat,
               '📋 Панель радара\n'
