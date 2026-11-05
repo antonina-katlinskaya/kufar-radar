@@ -302,6 +302,10 @@ def ensure_control_panel(db,tg,chat_id):
     if message_id and tg.pin(chat_id,message_id):
         return True
 
+    # Automatic panel restoration must not wake subscribers at night.
+    if not 8 <= datetime.now(MINSK).hour < 22:
+        return False
+
     try:
         response=tg.send(
           chat_id,
@@ -1188,7 +1192,7 @@ async def run():
         ensure_control_panel(db,tg,chat)
         ensure_navigation(db,tg,chat)
 
-    if owner and db.get_state(INVITE_NOTICE_STATE,'')!='1':
+    if owner and 8 <= datetime.now(MINSK).hour < 22 and db.get_state(INVITE_NOTICE_STATE,'')!='1':
         try:
             send_invite(db,tg,str(owner))
             db.set_state(INVITE_NOTICE_STATE,'1')
