@@ -1,5 +1,11 @@
 const API='https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated';
 const MARKET_PAGES=3;
+// Repair only the independently verified Anastasia Biyanova profile. Never
+// rewrite one verified numeric profile to another or infer source deletion.
+export function shouldRepairAnastasiaOwner(previousProfile, observedProfile) {
+  return String(observedProfile)==='8517496' &&
+    typeof previousProfile==='string' && previousProfile.startsWith('account:');
+}
 const HOUSE_ADDRESS={
  'Дом 4.2':'Николы Теслы ул, 33, Минск','Дом 11.1':'Игоря Лученка ул, 18, Минск','Дом 11.2':'Игоря Лученка ул, 22, Минск',
  'Дом 11.5':'Михаила Савицкого ул, 25, Минск','Дом 16.39':'Михаила Савицкого ул, 24, Минск','Дом 18.1':'Белградская ул, 1, Минск',
@@ -58,11 +64,15 @@ async function scanProfile(env,profile) {
   const rows=[...all.values()].filter(claimed).map(ad=>parsed(ad,profile));mw=rows.length;
   for(const r of rows)seenIds.add(r.id);
   const ids=rows.map(x=>x.id);const previous=new Map();
-  for(let i=0;i<ids.length;i+=100){const part=ids.slice(i,i+100);const q=await db.prepare(`SELECT ad_id,price_eur,price_byn,area,rooms,floor,address,title,present FROM kufar_ads_live WHERE ad_id IN (${part.map(()=>'?').join(',')})`).bind(...part).all();for(const x of q.results)previous.set(x.ad_id,x);}
+  for(let i=0;i<ids.length;i+=100){const part=ids.slice(i,i+100);const q=await db.prepare(`SELECT ad_id,profile_id,price_eur,price_byn,area,rooms,floor,address,title,present FROM kufar_ads_live WHERE ad_id IN (${part.map(()=>'?').join(',')})`).bind(...part).all();for(const x of q.results)previous.set(x.ad_id,x);}
   const writes=[],proposalRows=[];let added=0,changed=0;
   for(const r of rows){const old=previous.get(r.id),fields=['price_eur','price_byn','area','rooms','floor','address','title'];
    if(!old){writes.push(db.prepare('INSERT INTO kufar_ads_live(ad_id,profile_id,observed_at,list_time,price_eur,price_byn,area,rooms,floor,address,title,url,raw_json,first_seen,last_seen,present) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)').bind(r.id,profile,now,r.list_time,r.price_eur,r.price_byn,r.area,r.rooms,r.floor,r.address,r.title,r.url,r.raw_json,now,now));writes.push(event(db,r.id,now,scanId,'appeared'));proposalRows.push(r);added++;}
    else {const diffs=fields.filter(k=>String(old[k]??'')!==String(r[k]??''));const returned=!old.present;
+    // Market discovery can create account:* rows before this verified profile
+    // is crawled. Assign only those currently observed in the 8517496 feed;
+    // this metadata-only repair produces no appeared/changed/returned event.
+    if(shouldRepairAnastasiaOwner(old.profile_id,profile))writes.push(db.prepare("UPDATE kufar_ads_live SET profile_id=? WHERE ad_id=? AND profile_id LIKE 'account:%'").bind(profile,r.id));
     if(diffs.length||returned){writes.push(db.prepare('UPDATE kufar_ads_live SET observed_at=?,last_seen=?,price_eur=?,price_byn=?,area=?,rooms=?,floor=?,address=?,title=?,url=?,raw_json=?,present=1 WHERE ad_id=?').bind(now,now,r.price_eur,r.price_byn,r.area,r.rooms,r.floor,r.address,r.title,r.url,r.raw_json,r.id));for(const k of diffs)writes.push(event(db,r.id,now,scanId,'field_changed',k,JSON.stringify(old[k]??null),JSON.stringify(r[k]??null)));if(returned)writes.push(event(db,r.id,now,scanId,'returned'));if(returned||diffs.some(k=>['area','rooms','floor','address'].includes(k)))proposalRows.push(r);changed++;}
     /* Unchanged ads are already in the snapshot; avoid one D1 write per ad per scan. */}
   }
