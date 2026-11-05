@@ -178,7 +178,7 @@ class FakeTelegram:
 def test_control_panel_is_created_pinned_and_saved_even_with_zero_violations():
     db=FakeDB()
     tg=FakeTelegram()
-    assert ensure_control_panel(db,tg,'100')
+    assert ensure_control_panel(db,tg,'100',now=t(12))
     key=f'{CONTROL_PANEL_STATE_PREFIX}100'
     assert db.state[key]=='501'
     assert tg.pinned==[('100',501)]
@@ -198,10 +198,17 @@ def test_control_panel_recreates_itself_if_saved_message_disappeared():
     db=FakeDB({key:'321'})
     tg=FakeTelegram()
     tg.pin_results[321]=False
-    assert ensure_control_panel(db,tg,'100')
+    assert ensure_control_panel(db,tg,'100',now=t(12))
     assert db.state[key]=='501'
     assert tg.pinned==[('100',321),('100',501)]
     assert len(tg.sent)==1
+
+def test_control_panel_is_never_auto_recreated_during_quiet_hours():
+    for hour in [0, 7, 22, 23]:
+        db=FakeDB()
+        tg=FakeTelegram()
+        assert not ensure_control_panel(db,tg,'100',now=t(hour))
+        assert tg.sent==[]
 
 def test_invite_adds_second_subscriber_once():
     db=FakeDB({'telegram_chat_id':'100',INVITE_TOKEN_STATE:'secret-link'})
