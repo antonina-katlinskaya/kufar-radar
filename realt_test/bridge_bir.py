@@ -8,7 +8,10 @@ import httpx
 from realt_test.github_store import GitHubFile, REPO
 from realt_test.export_bir import main as export_snapshot
 
-STEP = 'Refresh BIR snapshot before comparison'
+STEPS = {
+    'Radar': 'Refresh BIR snapshot before comparison',
+    'Bir history scan': 'Scan Bir.by and update existing D1',
+}
 
 def stamp(value):
     out=datetime.fromisoformat(str(value).replace('Z','+00:00'))
@@ -29,7 +32,7 @@ def success_record(log, start, end):
     return records[-1]
 
 def eligible(run):
-    return (run.get('name')=='Radar' and run.get('head_branch')=='main'
+    return (run.get('name') in STEPS and run.get('head_branch')=='main'
             and run.get('head_repository',{}).get('full_name')==REPO
             and run.get('status')=='completed')
 
@@ -54,39 +57,88 @@ def d1_lookup(scan_id):
     print(json.dumps({'bir_metadata_rows_read':body['result'][0].get('meta',{}).get('rows_read')}))
     return rows[0]['checked_at']
 
-def main():
-    now=datetime.now(timezone.utc)
-    cached=GitHubFile('realt-bir-snapshot','realt_state/bir.json').read()
-    age=now-stamp(cached['checked_at'])
-    if cached.get('complete') is True and timedelta(minutes=-5)<=age<=timedelta(minutes=10):
-        print(json.dumps({'bir_export_skipped':'existing GitHub snapshot is fresh'}));return
-    event=json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-    with httpx.Client(timeout=60,follow_redirects=True,headers={
-        'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'], 'Accept':'application/vnd.github+json'}) as client:
-        trigger=event.get('workflow_run')
-        if trigger:
-            if not eligible(trigger):raise RuntimeError('Untrusted source workflow')
-            runs=[trigger]
-        else:
-            runs=[r for r in get(client,'/actions/runs?per_page=50')['workflow_runs'] if eligible(r)]
-        record=None
-        for run in runs:
-            if now-stamp(run['created_at'])>timedelta(minutes=40):continue
-            jobs=get(client,f"/actions/runs/{run['id']}/jobs")['jobs']
-            for job in jobs:
-                steps=[s for s in job.get('steps',[]) if s['name']==STEP and s.get('conclusion')=='success']
-                if not steps:continue
-                step=steps[0]
-                response=client.get('https://api.github.com/repos/'+REPO+f"/actions/jobs/{job['id']}/logs")
-                if not response.is_success:raise RuntimeError('Successful Bir source log is unavailable')
-                record=success_record(response.text,step['started_at'],step['completed_at'])
-                break
-            if record:break
-        if not record:raise RuntimeError('No recent successful existing Bir refresh; no new scan requested')
-    checked=record.get('checked_at') or d1_lookup(record['scanId'])
-    if not timedelta(minutes=-5)<=now-stamp(checked)<=timedelta(minutes=35):
-        raise RuntimeError('Existing Bir scan is stale; export aborted')
-    Path(os.environ['BIR_EXPORT_META_PATH']).write_text(json.dumps({'ok':True,'checked_at':checked}))
-    export_snapshot()
+def trusted_candidates(trigger, recent):
+    """Accept only completed trusted source runs, preferring newest evidence."""
+    if trigger is not None and not eligible(trigger):
+        raise RuntimeError('Untrusted source workflow')
+    candidates = []
+    seen = set()
+    for run in ([trigger] if trigger else []) + list(recent):
+        if not run or not eligible(run) or run.get('conclusion') != 'success':
+            continue
+        if run['id'] in seen:
+            continue
+        seen.add(run['id'])
+        candidates.append(run)
+    return sorted(candidates, key=lambda r: stamp(r['created_at']), reverse=True)
 
-if __name__=='__main__':main()
+
+def report_ready(ready, reason=''):
+    output = os.environ.get('GITHUB_OUTPUT')
+    if output:
+        with open(output, 'a', encoding='utf-8') as file:
+            file.write('ready=' + str(bool(ready)).lower() + '\n')
+    if reason:
+        print(json.dumps({'bir_audit_ready': bool(ready), 'reason': reason}))
+    else:
+        print(json.dumps({'bir_audit_ready': bool(ready)}))
+
+
+def main():
+    now = datetime.now(timezone.utc)
+    cached = GitHubFile('realt-bir-snapshot', 'realt_state/bir.json').read()
+    age = now - stamp(cached['checked_at'])
+    if cached.get('complete') is True and timedelta(minutes=-5) <= age <= timedelta(minutes=10):
+        report_ready(True, 'Existing validated Bir export is fresh')
+        return
+
+    event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+    with httpx.Client(timeout=60, follow_redirects=True, headers={
+        'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'],
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'realt-bir-verified-source',
+    }) as client:
+        trigger = event.get('workflow_run')
+        recent = get(client, '/actions/runs?per_page=70')['workflow_runs']
+        runs = trusted_candidates(trigger, recent)
+        record = None
+        for run in runs:
+            if now - stamp(run['created_at']) > timedelta(minutes=40):
+                continue
+            jobs = get(client, f"/actions/runs/{run['id']}/jobs")['jobs']
+            for job in jobs:
+                steps = [s for s in job.get('steps', [])
+                         if s['name'] == STEPS[run['name']] and s.get('conclusion') == 'success']
+                if not steps:
+                    continue
+                step = steps[0]
+                response = client.get('https://api.github.com/repos/' + REPO +
+                                      f"/actions/jobs/{job['id']}/logs")
+                if not response.is_success:
+                    raise RuntimeError('Successful Bir source log is unavailable')
+                try:
+                    record = success_record(response.text, step['started_at'], step['completed_at'])
+                except RuntimeError:
+                    continue
+                break
+            if record:
+                break
+        if not record:
+            # No new source scan here. Do not compare old prices or fail a
+            # delayed GitHub schedule during Radar's overnight pause.
+            report_ready(False, 'No recent verified Bir refresh; audit safely deferred')
+            return
+
+    checked = record.get('checked_at') or d1_lookup(record['scanId'])
+    if not timedelta(minutes=-5) <= now - stamp(checked) <= timedelta(minutes=35):
+        report_ready(False, 'Verified Bir refresh is too old; audit safely deferred')
+        return
+    Path(os.environ['BIR_EXPORT_META_PATH']).write_text(json.dumps({
+        'ok': True, 'checked_at': checked,
+    }))
+    export_snapshot()
+    report_ready(True, 'Fresh verified Bir export is available')
+
+
+if __name__ == '__main__':
+    main()
