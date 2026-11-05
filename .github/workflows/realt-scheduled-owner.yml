@@ -9,7 +9,7 @@ on:
       - '.github/workflows/realt-scheduled-owner.yml'
   workflow_dispatch: {}
   workflow_run:
-    workflows: ['Radar']
+    workflows: ['Radar', 'Bir history scan']
     types: [completed]
     branches: [main]
 permissions:
@@ -38,6 +38,7 @@ jobs:
       - name: Verify owner-only policy and durable GitHub state
         run: python -m unittest discover -s realt_test -p 'test_*.py' -v
       - name: Export the existing successful Bir refresh without scanning sources
+        id: bir
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
@@ -45,10 +46,13 @@ jobs:
           BIR_EXPORT_META_PATH: /tmp/realt-bir-scan.json
         run: python -m realt_test.bridge_bir
       - name: Check Realt listings and exported fresh Bir
+        if: steps.bir.outputs.ready == 'true'
         run: python -m realt_test.run
       - name: Preview only new reviews
+        if: steps.bir.outputs.ready == 'true'
         run: python -m realt_test.check_pending
       - name: Deliver to verified personal chat only
+        if: steps.bir.outputs.ready == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python -m realt_test.notify
@@ -56,7 +60,7 @@ jobs:
         if: always()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          REALT_JOB_STATUS: ${{ job.status }}
+          REALT_JOB_STATUS: ${{ steps.bir.outputs.ready == 'true' && job.status || 'failure' }}
         run: python -m realt_test.health
       - uses: actions/upload-artifact@v4
         if: always()
