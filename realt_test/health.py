@@ -13,6 +13,14 @@ def is_daytime_alert(now):
     return 9 <= hour < 22
 
 
+def is_expected_source_pause(success, deferred, now):
+    """Quiet only a verified source deferral during the overnight collection pause.
+
+    Real workflow failures (no deferred output) must still be reported.
+    """
+    return not success and deferred and not is_daytime_alert(now)
+
+
 def main():
     if os.environ.get('GITHUB_REPOSITORY') != REPOSITORY or os.environ.get('GITHUB_WORKFLOW') != 'Realt scheduled owner-only':
         raise RuntimeError('Health notice is restricted to owner workflow')
@@ -21,6 +29,10 @@ def main():
     outcome=json.loads(report.read_text()) if success and report.exists() else {}
     stale=bool(outcome.get('source_stale'))
     now=datetime.now(timezone.utc)
+    deferred=os.environ.get('REALT_BIR_DEFERRED')=='true'
+    if is_expected_source_pause(success, deferred, now):
+        print(json.dumps({'bir_deferred':True, 'alert_skipped':'expected overnight source pause'}))
+        return
     if stale and not is_daytime_alert(now):
         print(json.dumps({'source_stale':True,'alert_skipped':'outside Minsk daytime collection window'}))
         return
@@ -37,6 +49,10 @@ def main():
     text=('✅ Realt Radar: перенос состояния в GitHub проверен. Свежий снимок Bir прочитан из GitHub. История отправок сохранена. Kufar не изменён.' if success else
           '⏸ Realt Radar: проверка не завершена. Возможна задержка свежего снимка или ошибка запуска. Ценовые предупреждения по устаревшим данным не отправляются. Kufar не изменён.')
     if baseline:text='✅ Realt Radar: архивная история и отметки прежних отправок восстановлены в GitHub. Свежий Bir прочитан из GitHub. Для новых ценовых уведомлений ожидается свежий снимок сборщика Realt. Kufar не изменён.'
+    if deferred and not success:
+        text=('⏸ Realt Radar: к 09:00 по Минску нет подтверждённого свежего снимка Bir. '
+              'Сверка Realt и ценовые уведомления безопасно приостановлены до обновления источника. '
+              'Это отсутствие данных, а не доказанная ошибка GitHub. Kufar не изменён.')
     if stale:
         latest=str((outcome.get('source') or {}).get('latest_snapshot_at') or 'неизвестно')
         text=('⏸ Realt Radar: источник Realt НЕ обновился по расписанию. '
