@@ -50,10 +50,10 @@ class BridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             output = os.path.join(folder, 'output')
             with patch.dict(os.environ, {'GITHUB_OUTPUT': output}):
-                report_ready(False, 'No verified source')
+                report_ready(False, 'No verified source', deferred=True)
                 report_ready(True, 'Verified source')
             with open(output, encoding='utf-8') as f:
-                self.assertEqual(f.read().splitlines(), ['ready=false', 'ready=true'])
+                self.assertEqual(f.read().splitlines(), ['ready=false', 'deferred=true', 'ready=true', 'deferred=false'])
 
     def test_main_defers_missing_bir_source_without_export(self):
         import json
@@ -79,7 +79,7 @@ class BridgeTests(unittest.TestCase):
                 saved.return_value.read.return_value = {'complete': True, 'checked_at': old}
                 main()
                 exporter.assert_not_called()
-            self.assertEqual(output.read_text(encoding='utf-8'), 'ready=false\n')
+            self.assertEqual(output.read_text(encoding='utf-8'), 'ready=false\ndeferred=true\n')
 
     def test_main_accepts_verified_independent_bir_history_record(self):
         import json
@@ -121,7 +121,7 @@ class BridgeTests(unittest.TestCase):
                 response.text = iso(now) + ' ' + record
                 main()
                 exporter.assert_called_once()
-            self.assertEqual(output.read_text(encoding='utf-8'), 'ready=true\n')
+            self.assertEqual(output.read_text(encoding='utf-8'), 'ready=true\ndeferred=false\n')
             self.assertEqual(json.loads(meta.read_text(encoding='utf-8'))['ok'], True)
 
     def test_fractional_log_time_after_second_precision_step_end(self):
