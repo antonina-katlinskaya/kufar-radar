@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from realt_test.health import is_daytime_alert
+from realt_test.health import is_daytime_alert, is_expected_source_pause
 from realt_test.run import stale_source_report
 
 
@@ -38,6 +38,15 @@ class RealtStalenessTests(unittest.TestCase):
         self.assertFalse(is_daytime_alert(datetime(2026, 11, 3, 5, tzinfo=timezone.utc)))
         self.assertTrue(is_daytime_alert(datetime(2026, 11, 3, 6, tzinfo=timezone.utc)))
         self.assertFalse(is_daytime_alert(datetime(2026, 11, 3, 20, tzinfo=timezone.utc)))
+
+
+    def test_planned_night_pause_does_not_page_owner_but_real_failures_do(self):
+        overnight = datetime(2026, 11, 6, 0, 8, tzinfo=timezone.utc)  # 03:08 Minsk
+        morning = datetime(2026, 11, 6, 6, 5, tzinfo=timezone.utc)  # 09:05 Minsk
+        self.assertTrue(is_expected_source_pause(False, True, overnight))
+        self.assertFalse(is_expected_source_pause(False, True, morning))
+        self.assertFalse(is_expected_source_pause(False, False, overnight))
+        self.assertFalse(is_expected_source_pause(True, True, overnight))
 
 
 if __name__ == "__main__":
