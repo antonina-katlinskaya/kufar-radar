@@ -555,6 +555,16 @@ def actionable_event_records(records):
       if event.get('field_name') in ACTIONABLE_FIELDS
     ]
 
+def notifiable_new_events(new_events, prior_active, kufar_changed):
+    """Do not announce BIR-only reclassification of an unresolved violation again.
+
+    A genuinely edited Kufar card and a newly violating card still notify.
+    Event history and the current unresolved list are intentionally untouched.
+    """
+    if not kufar_changed and any(field in ACTIONABLE_FIELDS for field in (prior_active or {})):
+        return []
+    return new_events
+
 def save_diag(db,source,diag):
     ts=datetime.now(timezone.utc).isoformat(); stm=[]; seen=set()
     for row in diag[-10:]:
@@ -1204,8 +1214,10 @@ async def run():
     pending=load_pending_audits(db)
     cleaned_polluted_pending=cleanup_polluted_strict_backfill(db,pending)
     profile_runs=[]; targets=[]; all_items=[]; current_selected_ids=set()
+    kufar_changed_ad_ids=set()
     for profile in KUFAR_PROFILES:
         items,changed,previous_active=await collect_kufar(db,profile)
+        kufar_changed_ad_ids.update(item.ad_id for item in changed)
         all_items.extend(items)
         selected,selection_mode=choose_audit_targets(
           items,changed,previous_active,
@@ -1297,12 +1309,17 @@ async def run():
     # whose Kufar publication/update time is today in Minsk.
     session=AuditSession(db,[item.ad_id for item in targets])
     all_new=[]
+    notify_new=[]
     resolved_price=[]
     for k in targets:
+        prior_active=dict(session.active.get(k.ad_id) or {})
         r=session.audit(k)
-        prior_price=(session.active.get(k.ad_id) or {}).get('price')
-        for e in session.sync(k,r):
+        prior_price=prior_active.get('price')
+        new_events=session.sync(k,r)
+        for e in new_events:
             all_new.append((e,k))
+        for e in notifiable_new_events(new_events,prior_active,k.ad_id in kufar_changed_ad_ids):
+            notify_new.append((e,k))
         # Only an actual audit-driven closure; never policy migration or ad disappearance.
         remaining=session.active.get(k.ad_id) or {}
         if (prior_price and prior_price.get('id') is not None
@@ -1344,7 +1361,7 @@ async def run():
             notice,keyboard=resolved_price_notification(db,event,k,datetime.now(timezone.utc).isoformat())
             queue_auto_notification(db,auto_queue,auto_chats,notice,keyboard=keyboard)
     if auto_chats and should_live_notify(local_now):
-        actionable_new=actionable_event_records(all_new)
+        actionable_new=actionable_event_records(notify_new)
         mass,single_records=split_mass_records(actionable_new)
         for field,profile_id,records in mass:
             text=telegram_html(fmt_mass_event_group(field,profile_id,records))
