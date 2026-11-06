@@ -73,15 +73,21 @@ def trusted_candidates(trigger, recent):
     return sorted(candidates, key=lambda r: stamp(r['created_at']), reverse=True)
 
 
-def report_ready(ready, reason=''):
+def report_ready(ready, reason='', deferred=False):
+    """Mark missing source as deferred, not as a failed source collection.
+
+    GitHub workflow must still gate all price comparisons on ready=true.
+    The separate deferred bit only controls the overnight owner warning.
+    """
     output = os.environ.get('GITHUB_OUTPUT')
     if output:
         with open(output, 'a', encoding='utf-8') as file:
             file.write('ready=' + str(bool(ready)).lower() + '\n')
+            file.write('deferred=' + str(bool(deferred and not ready)).lower() + '\n')
+    payload = {'bir_audit_ready': bool(ready), 'deferred': bool(deferred and not ready)}
     if reason:
-        print(json.dumps({'bir_audit_ready': bool(ready), 'reason': reason}))
-    else:
-        print(json.dumps({'bir_audit_ready': bool(ready)}))
+        payload['reason'] = reason
+    print(json.dumps(payload))
 
 
 def main():
@@ -126,12 +132,12 @@ def main():
         if not record:
             # No new source scan here. Do not compare old prices or fail a
             # delayed GitHub schedule during Radar's overnight pause.
-            report_ready(False, 'No recent verified Bir refresh; audit safely deferred')
+            report_ready(False, 'No recent verified Bir refresh; audit safely deferred', deferred=True)
             return
 
     checked = record.get('checked_at') or d1_lookup(record['scanId'])
     if not timedelta(minutes=-5) <= now - stamp(checked) <= timedelta(minutes=35):
-        report_ready(False, 'Verified Bir refresh is too old; audit safely deferred')
+        report_ready(False, 'Verified Bir refresh is too old; audit safely deferred', deferred=True)
         return
     Path(os.environ['BIR_EXPORT_META_PATH']).write_text(json.dumps({
         'ok': True, 'checked_at': checked,
