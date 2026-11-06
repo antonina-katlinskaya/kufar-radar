@@ -1,5 +1,10 @@
 const API='https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated';
 const MARKET_PAGES=3;
+// Spend two extra deep pages only on the affected Alyona Dovgun profile.
+// All other profile/page limits and the existing request pacing stay unchanged.
+export function deepPageBudget(profile) {
+  return String(profile)==='11093294'?4:2;
+}
 // Repair only the independently verified Anastasia Biyanova profile. Never
 // rewrite one verified numeric profile to another or infer source deletion.
 export function shouldRepairAnastasiaOwner(previousProfile, observedProfile) {
@@ -58,7 +63,7 @@ async function scanProfile(env,profile) {
   const newest=await fetchPage(profile,null);total=newest.total;
   let cursor=state.cursor||newest.next,page=state.cursor?state.page_number:2;
   const all=new Map(newest.ads.map(ad=>[String(ad.ad_id),ad]));seen+=newest.ads.length;
-  for(let i=0;i<2&&cursor;i++) {const d=await fetchPage(profile,cursor);seen+=d.ads.length;for(const ad of d.ads)all.set(String(ad.ad_id),ad);cursor=d.next;page++;}
+  for(let i=0;i<deepPageBudget(profile)&&cursor;i++) {const d=await fetchPage(profile,cursor);seen+=d.ads.length;for(const ad of d.ads)all.set(String(ad.ad_id),ad);cursor=d.next;page++;}
   const accountId=newest.ads[0]?.account_id;
   if(accountId)await db.prepare('UPDATE kufar_profiles SET account_id=?,last_seen=? WHERE profile_id=? AND (account_id IS NULL OR account_id=?)').bind(accountId,now,profile,accountId).run();
   const rows=[...all.values()].filter(claimed).map(ad=>parsed(ad,profile));mw=rows.length;
