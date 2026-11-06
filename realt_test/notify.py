@@ -62,10 +62,15 @@ def format_card(item, bir_checked_at):
             return None
     price = number(item.get('price'), 0)
     currency = {'978':'€','EUR':'€','933':'BYN','BYN':'BYN'}.get(str(item.get('currency')), 'валюта неизвестна')
-    lines = ['⚠️ <b>ЗАДНИМ ЧИСЛОМ ИЗМЕНЕНЫ СУЩЕСТВЕННЫЕ ПАРАМЕТРЫ</b>' if item.get('status') == 'BACKDATED' else '🟠 <b>ВЕРОЯТНО: НЕТ СОВПАДЕНИЯ КОМНАТ + ПЛОЩАДИ + СПЕЦЦЕНЫ</b>',
-             '', f"👤 <b>{esc(item.get('person'))}</b>"]
-    if item.get('status')=='RESOLVED':
-        lines[0]='✅ <b>ПРЕДЫДУЩЕЕ РАСХОЖДЕНИЕ УСТРАНЕНО</b>'
+    if item.get('status') == 'BACKDATED':
+        headline = '⚠️ <b>ЗАДНИМ ЧИСЛОМ ИЗМЕНЕНЫ СУЩЕСТВЕННЫЕ ПАРАМЕТРЫ</b>'
+    elif item.get('status') == 'RESOLVED':
+        headline = '✅ <b>ПРЕДЫДУЩЕЕ РАСХОЖДЕНИЕ УСТРАНЕНО</b>'
+    elif options:
+        headline = '🟠 <b>ВЕРОЯТНО: НЕ НАЙДЕНО СОВПАДЕНИЕ ЦЕНЫ REALT СО СПЕЦЦЕНОЙ BIR</b>'
+    else:
+        headline = '🟠 <b>ВЕРОЯТНО: В BIR НЕТ ОБЪЕКТА С ТАКИМИ КОМНАТАМИ И ПЛОЩАДЬЮ</b>'
+    lines = [headline, '', f"👤 <b>{esc(item.get('person'))}</b>"]
     if item.get('quarter'):
         lines.append(f"🏢 {esc(item['quarter'])}")
     address = str(item.get('address') or '')
