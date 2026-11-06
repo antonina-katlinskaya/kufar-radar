@@ -40,6 +40,24 @@ class RealtStalenessTests(unittest.TestCase):
         self.assertFalse(is_daytime_alert(datetime(2026, 11, 3, 20, tzinfo=timezone.utc)))
 
 
+    def test_overnight_defer_exits_before_telegram_or_state_writes(self):
+        from realt_test.health import main as health_main, REPOSITORY
+        night = datetime(2026, 11, 6, 0, 8, tzinfo=timezone.utc)
+        env = {
+            "GITHUB_REPOSITORY": REPOSITORY,
+            "GITHUB_WORKFLOW": "Realt scheduled owner-only",
+            "REALT_JOB_STATUS": "failure",
+            "REALT_BIR_DEFERRED": "true",
+        }
+        with patch.dict(os.environ, env), \
+             patch("realt_test.health.datetime") as clock, \
+             patch("realt_test.health.GitHubState") as state, \
+             patch("realt_test.health.Bot") as bot:
+            clock.now.return_value = night
+            health_main()
+            state.assert_not_called()
+            bot.assert_not_called()
+
     def test_planned_night_pause_does_not_page_owner_but_real_failures_do(self):
         overnight = datetime(2026, 11, 6, 0, 8, tzinfo=timezone.utc)  # 03:08 Minsk
         morning = datetime(2026, 11, 6, 6, 5, tzinfo=timezone.utc)  # 09:05 Minsk
