@@ -61,6 +61,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           REALT_JOB_STATUS: ${{ steps.bir.outputs.ready == 'true' && job.status || 'failure' }}
+          REALT_BIR_DEFERRED: ${{ steps.bir.outputs.deferred }}
         run: python -m realt_test.health
       - uses: actions/upload-artifact@v4
         if: always()
