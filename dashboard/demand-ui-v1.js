@@ -128,7 +128,7 @@ function viewDemand(){
  const base=DEM.metric==="views"?"просмотров":"открытий";
  const available=period.days.length?period.days[0]+" — "+period.days.at(-1):"нет данных";
  const coverage=period.from<period.first||period.to>period.last?' · доступная история: '+period.first+" — "+period.last:"";
- const pref=DEM.metric==="ratio"?'Для сравнения доли открытий в группе нужно не менее 20 просмотров. ":"";
+ const pref=DEM.metric==="ratio"?'Для сравнения доли открытий в группе нужно не менее 20 просмотров. ':"";
  const note='Период: '+period.from+' — '+period.to+' · учтены дни: '+fmt(period.days.length)+' ('+available+').'+coverage
  +' Вычтены обнаруженные роботизированные открытия номера. Цена берётся из текущей карточки, её прошлые изменения не восстановлены. '+pref
  +(data.unpriced?' Не хватает площади или цены для группировки: '+fmt(data.unpriced)+' объявлений.':'');
