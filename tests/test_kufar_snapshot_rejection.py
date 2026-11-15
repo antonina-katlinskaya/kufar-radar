@@ -23,8 +23,9 @@ class SnapshotDB:
         rows = self.rows[params[0]]
         if sql.startswith('SELECT COUNT(*)'):
             return [{'n': sum(row['active'] for row in rows)}]
-        assert sql == 'SELECT * FROM kufar_ads WHERE profile_id=?'
-        return rows
+        assert sql == 'SELECT * FROM kufar_ads WHERE profile_id=? ORDER BY ad_id LIMIT ? OFFSET ?'
+        limit, offset = params[1:]
+        return sorted(rows, key=lambda row: row['ad_id'])[offset:offset + limit]
 
     def batch(self, statements):
         self.writes.extend(statements)
