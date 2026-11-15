@@ -8,8 +8,25 @@ class InvalidKufarSnapshot(RuntimeError):
 def now(): return datetime.now(timezone.utc).isoformat()
 def fp(v): return hashlib.sha256(json.dumps(v,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 
+def _query_paged(db, table, where='', params=(), order='rowid', page_size=50):
+    """Bound D1 API response size while preserving every stored record.
+
+    Avoid fetching a whole history table in one Cloudflare API response
+    (Cloudflare D1 limits each response to 50 MB).
+    """
+    offset = 0
+    rows = []
+    query = f'SELECT * FROM {table}' + (f' WHERE {where}' if where else '') + f' ORDER BY {order} LIMIT ? OFFSET ?'
+    while True:
+        chunk = db.query(query, [*params, page_size, offset])
+        rows.extend(chunk)
+        if len(chunk) < page_size:
+            return rows
+        offset += len(chunk)
+
+
 def load_current_kufar(db,profile_id):
-    return {r['ad_id']:r for r in db.query('SELECT * FROM kufar_ads WHERE profile_id=?',[profile_id])}
+    return {r['ad_id']:r for r in _query_paged(db,'kufar_ads','profile_id=?',(profile_id,),'ad_id')}
 
 def _same(a,b):
     if a is None or b is None:
@@ -172,7 +189,7 @@ def save_kufar(db,items,profile_id):
     return changed
 
 def save_bir(db,items):
-    cur={r['object_key']:r for r in db.query('SELECT * FROM bir_objects')}; ts=now(); seen=set(); stm=[]
+    cur={r['object_key']:r for r in _query_paged(db,'bir_objects',order='object_key')}; ts=now(); seen=set(); stm=[]
     prev_active=sum(1 for r in cur.values() if r.get('active'))
     if len(items)<20 or (prev_active>=50 and len(items)<int(prev_active*0.70)):
         raise RuntimeError(f'Invalid Bir snapshot: got {len(items)}, previous active {prev_active}')
@@ -208,7 +225,7 @@ def save_bir(db,items):
 
 def current_bir(db):
     out=[]
-    for r in db.query('SELECT * FROM bir_objects WHERE active=1'):
+    for r in _query_paged(db,'bir_objects','active=1',order='object_key'):
         raw={}
         try: raw=json.loads(r.get('raw_json') or '{}')
         except: pass
@@ -217,7 +234,7 @@ def current_bir(db):
 
 def current_kufar(db,profile_id):
     out=[]
-    for r in db.query('SELECT * FROM kufar_ads WHERE active=1 AND profile_id=?',[profile_id]):
+    for r in _query_paged(db,'kufar_ads','active=1 AND profile_id=?',(profile_id,),'ad_id'):
         raw={}
         try: raw=json.loads(r.get('raw_json') or '{}')
         except: pass
@@ -227,7 +244,7 @@ def current_kufar(db,profile_id):
 
 def inactive_bir(db):
     out=[]
-    for r in db.query('SELECT * FROM bir_objects WHERE active=0'):
+    for r in _query_paged(db,'bir_objects','active=0',order='object_key'):
         raw={}
         try: raw=json.loads(r.get('raw_json') or '{}')
         except: pass
