@@ -1109,9 +1109,13 @@ def queue_auto_notification(db,queue,chats,text,keyboard=None,parse_mode='HTML',
     # Business alerts reach subscribers; technical notices are owner-only.
     if category not in ('violation', 'technical'):
         raise ValueError(f'Unsupported notification category: {category}')
+    owner=db.get_state('telegram_chat_id')
     if category == 'technical':
-        owner=db.get_state('telegram_chat_id')
         chats=[owner] if owner else []
+    elif owner:
+        # The owner receives technical alerts only; other subscribers
+        # continue to receive employee violations and resolutions.
+        chats=[chat for chat in chats if str(chat)!=str(owner)]
     # Persist alerts (and original detection text) before attempting Telegram.
     recipients=list(dict.fromkeys(str(chat) for chat in chats if chat is not None))
     if not recipients:
