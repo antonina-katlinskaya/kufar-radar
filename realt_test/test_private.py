@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from realt_test.notify import OWNER_ID, publish, validate_owner
+from realt_test.notify import OWNER_ID, SISTER_ID, SisterHistory, publish, validate_owner
 from realt_test.policy import area_equal, created_in_window, decimal_value
 from realt_test.run import audit, write_reports
 from realt_test.sources import TRACKED, merge_snapshots
@@ -98,7 +98,7 @@ class OwnerTests(unittest.TestCase):
             def call(self, method, payload, files=None):
                 self.calls.append((method, payload))
                 if method == 'getChat':
-                    return {'id': int(OWNER_ID), 'type': 'private'}
+                    return {'id': int(SISTER_ID), 'type': 'private'}
                 if method == 'sendMessage':
                     return {'message_id': 123}
                 return True
@@ -116,7 +116,7 @@ class OwnerTests(unittest.TestCase):
                 os.chdir(old)
         finally:
             os.chdir(old)
-        self.assertTrue(all(str(p['chat_id']) == OWNER_ID for _, p in bot.calls))
+        self.assertTrue(all(str(p['chat_id']) == SISTER_ID for _, p in bot.calls))
         self.assertEqual([m for m, _ in bot.calls], ['getChat', 'sendMessage'])
         self.assertIn('inline_keyboard', bot.calls[1][1]['reply_markup'])
 
@@ -125,7 +125,7 @@ class OwnerTests(unittest.TestCase):
             def __init__(self): self.calls = []
             def call(self, method, payload, files=None):
                 self.calls.append((method, payload))
-                if method == 'getChat': return {'id': int(OWNER_ID), 'type': 'private'}
+                if method == 'getChat': return {'id': int(SISTER_ID), 'type': 'private'}
                 if method == 'sendMessage': return {'message_id': 202}
                 return True
         bot = FakeBot()
@@ -149,11 +149,29 @@ class OwnerTests(unittest.TestCase):
             calls = []
             def call(self, method, payload):
                 self.calls.append(method)
-                return {'id': 1037292158, 'type': 'private'}
+                return {'id': int(OWNER_ID), 'type': 'private'}
         bot = FakeBot()
         with self.assertRaises(RuntimeError):
             publish({}, OWNER_ID, bot, 'https://github.com/example/run')
         self.assertEqual(bot.calls, ['getChat'])
+
+    def test_explicit_owner_business_recipient_is_refused(self):
+        class NeverBot:
+            def call(self,*args,**kwargs): raise AssertionError("must not call Telegram")
+        with self.assertRaises(RuntimeError):
+            publish({},OWNER_ID,NeverBot(),"test",recipient=OWNER_ID)
+
+    def test_sister_history_keeps_owner_receipts_untouched(self):
+        class Db:
+            def __init__(self): self.values={'realt_private_owner_review_fingerprints_v1':'owner'}
+            def get_state(self,key,default=None): return self.values.get(key,default)
+            def set_state(self,key,value): self.values[key]=value
+        db=Db(); sister=SisterHistory(db)
+        sister.set_state('realt_private_owner_review_fingerprints_v1','sister')
+        sister.set_state('realt_private_owner_delivery_claims_v1','uncertain')
+        self.assertEqual(db.values['realt_private_owner_review_fingerprints_v1'],'owner')
+        self.assertEqual(sister.get_state('realt_private_owner_review_fingerprints_v1'),'sister')
+        self.assertEqual(db.values['realt_sister_delivery_claims_v1'],'uncertain')
 
 
 if __name__ == '__main__':

@@ -116,11 +116,11 @@ def format_card(item, bir_checked_at):
 
 
 def publish(result, owner, bot, run_url, review_items=None, before_send=None, after_send=None, recipient=None):
-    recipient=recipient or OWNER_ID
-    if str(recipient) != OWNER_ID:
-        raise RuntimeError('Realt notifications are owner-only')
+    recipient=recipient or SISTER_ID
+    if str(owner) != OWNER_ID or str(recipient) != SISTER_ID:
+        raise RuntimeError('Unverified business recipient; nothing sent')
     chat=bot.call('getChat', {'chat_id': recipient})
-    target=validate_owner(owner,chat)
+    target=validate_sister(recipient,chat)
     selected=review_items if review_items is not None else result.get('items',[])
     if not selected or not result.get('bir_checked_at'):
         raise RuntimeError('Refusing to send an empty or unchecked report')
@@ -151,6 +151,17 @@ def publish(result, owner, bot, run_url, review_items=None, before_send=None, af
         Path('realt_test/notification_receipt.json').write_text(
             json.dumps({k:v for k,v in receipt.items() if k!='delivered_items'},ensure_ascii=False,indent=2),encoding='utf-8')
     return receipt
+
+
+class SisterHistory:
+    """Isolated sister receipts; preserve existing uncertain-delivery boundaries."""
+    MAP = {
+        'realt_private_owner_review_fingerprints_v1':'realt_sister_review_fingerprints_v1',
+        'realt_private_owner_delivery_claims_v1':'realt_sister_delivery_claims_v1',
+    }
+    def __init__(self, db): self.db=db
+    def get_state(self,key,default=None): return self.db.get_state(self.MAP.get(key,key),default)
+    def set_state(self,key,value): return self.db.set_state(self.MAP.get(key,key),value)
 
 
 def main():
@@ -192,9 +203,19 @@ def main():
         return
     from realt_test.history import pending, acknowledge, claim
     owner_store=GitHubState()
+    sister_store=SisterHistory(owner_store)
+    baseline_key='realt_sister_routing_baseline_20261118_v1'
+    baseline_raw=owner_store.get_state(baseline_key)
+    if baseline_raw is None:
+        # Prevent a historical flood; this is a baseline, not a delivery receipt.
+        baseline_raw=owner_store.get_state('realt_private_owner_review_fingerprints_v1') or '{}'
+        owner_store.set_state(baseline_key,baseline_raw)
+    baseline=json.loads(baseline_raw)
+    from realt_test.dedup import fingerprint
     cases=[]
-    for label,recipient,store in [('owner',OWNER_ID,owner_store)]:
+    for label,recipient,store in [('sister',SISTER_ID,sister_store)]:
         unsent,_=pending(store,result)
+        unsent=[item for item in unsent if baseline.get(str(item['uuid']))!=fingerprint(item)]
         if unsent:cases.append((label,recipient,store,unsent))
     if not cases:
         print(json.dumps({'notification_sent':False,'reason':'No new cases for either recipient'}))
