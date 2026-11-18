@@ -14,6 +14,31 @@ def _query_paged(db, table, where='', params=(), order='rowid', page_size=50):
     Avoid fetching a whole history table in one Cloudflare API response
     (Cloudflare D1 limits each response to 50 MB).
     """
+    if order in ('ad_id', 'object_key'):
+        # Both columns are unique primary keys. Seek beyond the last delivered
+        # key instead of rereading/sorting every skipped OFFSET prefix.
+        cursor = None
+        rows = []
+        while True:
+            conditions = [f'({where})'] if where else []
+            values = list(params)
+            if cursor is not None:
+                conditions.append(f'{order}>?')
+                values.append(cursor)
+            query = f'SELECT * FROM {table}'
+            if conditions:
+                query += ' WHERE ' + ' AND '.join(conditions)
+            query += f' ORDER BY {order} LIMIT ?'
+            chunk = db.query(query, [*values, page_size])
+            rows.extend(chunk)
+            if len(chunk) < page_size:
+                return rows
+            next_cursor = chunk[-1].get(order)
+            if next_cursor is None or next_cursor == cursor:
+                raise RuntimeError('Stored-record cursor did not advance; partial snapshot refused')
+            cursor = next_cursor
+
+    # Retain the generic path for callers without a declared unique key.
     offset = 0
     rows = []
     query = f'SELECT * FROM {table}' + (f' WHERE {where}' if where else '') + f' ORDER BY {order} LIMIT ? OFFSET ?'
