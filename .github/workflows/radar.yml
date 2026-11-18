@@ -16,6 +16,8 @@ on:
     branches: [main]
     paths:
       - 'radar/**'
+      - 'notifications/radar_technical.py'
+      - 'tests/test_bir_external_health.py'
       - 'requirements.txt'
       - '.github/workflows/radar.yml'
 
