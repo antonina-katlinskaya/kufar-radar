@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 
 import pytest
 
@@ -18,14 +19,15 @@ class SnapshotDB:
         }
         self.writes = []
         self.state = {'last_kufar_success': 'previous-success'}
+        self.conn=sqlite3.connect(':memory:')
+        self.conn.row_factory=sqlite3.Row
+        self.conn.execute('CREATE TABLE kufar_ads(ad_id TEXT PRIMARY KEY,profile_id TEXT,active INTEGER)')
+        self.conn.executemany('INSERT INTO kufar_ads VALUES(?,?,?)',
+            [(r['ad_id'],r['profile_id'],r['active']) for rows in self.rows.values() for r in rows])
 
     def query(self, sql, params):
-        rows = self.rows[params[0]]
-        if sql.startswith('SELECT COUNT(*)'):
-            return [{'n': sum(row['active'] for row in rows)}]
-        assert sql == 'SELECT * FROM kufar_ads WHERE profile_id=? ORDER BY ad_id LIMIT ? OFFSET ?'
-        limit, offset = params[1:]
-        return sorted(rows, key=lambda row: row['ad_id'])[offset:offset + limit]
+        # Exercise SQL semantics rather than requiring one pagination syntax.
+        return [dict(row) for row in self.conn.execute(sql,params)]
 
     def batch(self, statements):
         self.writes.extend(statements)
