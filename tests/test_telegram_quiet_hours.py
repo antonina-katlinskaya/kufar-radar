@@ -78,3 +78,24 @@ def test_violation_notification_only_reaches_non_owner_subscribers():
     )
     assert flush_auto_queue(db, tg, queue, datetime(2026, 10, 9, 8, 0, tzinfo=MINSK)) == 1
     assert [chat for chat, _, _ in tg.sent] == ['sister']
+
+
+def test_old_business_queue_never_leaks_to_unsubscribed_owner():
+    db,tg=FakeDB(),FakeTelegram()
+    queue=[]
+    queue_auto_notification(db,queue,['owner','sister'],'original detection time')
+    queue[0].pop('category',None)
+    db.set_state('telegram_chat_id','owner')
+    assert flush_auto_queue(db,tg,queue,datetime(2026,11,18,10,0,tzinfo=MINSK))==1
+    assert [chat for chat,_,_ in tg.sent]==['sister']
+    assert tg.sent[0][1]=='original detection time'
+
+
+def test_technical_queue_keeps_owner_after_delivery_recheck():
+    db,tg=FakeDB(),FakeTelegram()
+    db.set_state('telegram_chat_id','owner')
+    queue=[]
+    queue_auto_notification(db,queue,['owner','sister'],'technical',category='technical')
+    assert queue[0]['category']=='technical'
+    assert flush_auto_queue(db,tg,queue,datetime(2026,11,18,10,0,tzinfo=MINSK))==1
+    assert [chat for chat,_,_ in tg.sent]==['owner']

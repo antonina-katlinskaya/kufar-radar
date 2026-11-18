@@ -1127,6 +1127,7 @@ def queue_auto_notification(db,queue,chats,text,keyboard=None,parse_mode='HTML',
         'keyboard':keyboard,
         'parse_mode':parse_mode,
         'pending_chats':recipients,
+        'category':category,
     })
     save_auto_queue(db,queue)
 
@@ -1139,6 +1140,18 @@ def flush_auto_queue(db,tg,queue,local_now):
     while queue:
         alert=queue[0]
         remaining=alert.get('pending_chats') or []
+        owner=db.get_state('telegram_chat_id')
+        if owner:
+            # Recheck consent at delivery, including older queued business alerts.
+            # Legacy production records came from violation/resolution paths.
+            category=alert.get('category','violation')
+            permitted=([chat for chat in remaining if str(chat)==str(owner)]
+                       if category=='technical' else
+                       [chat for chat in remaining if str(chat)!=str(owner)])
+            if permitted!=remaining:
+                remaining=permitted
+                alert['pending_chats']=remaining
+                save_auto_queue(db,queue)
         if not remaining:
             queue.pop(0)
             save_auto_queue(db,queue)
