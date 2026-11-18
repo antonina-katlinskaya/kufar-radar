@@ -68,7 +68,7 @@ def test_technical_notification_only_reaches_owner():
     assert [chat for chat, _, _ in tg.sent] == ['owner']
 
 
-def test_violation_notification_reaches_both_subscribers():
+def test_violation_notification_only_reaches_non_owner_subscribers():
     db, tg = FakeDB(), FakeTelegram()
     db.set_state('telegram_chat_id', 'owner')
     queue = []
@@ -76,5 +76,5 @@ def test_violation_notification_reaches_both_subscribers():
         db, queue, ['owner', 'sister'], 'Нарушение обнаружено',
         category='violation',
     )
-    assert flush_auto_queue(db, tg, queue, datetime(2026, 10, 9, 8, 0, tzinfo=MINSK)) == 2
-    assert [chat for chat, _, _ in tg.sent] == ['owner', 'sister']
+    assert flush_auto_queue(db, tg, queue, datetime(2026, 10, 9, 8, 0, tzinfo=MINSK)) == 1
+    assert [chat for chat, _, _ in tg.sent] == ['sister']
