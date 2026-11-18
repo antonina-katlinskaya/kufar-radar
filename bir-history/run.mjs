@@ -27,8 +27,15 @@ async function query(statements) {
     },
     body: JSON.stringify(payload)
   });
-  if (!response.ok) throw Error(`D1 HTTP ${response.status}`);
-  const body = await response.json();
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    // Persist only numeric diagnostics; never include credentials or request URLs.
+    const codes=(body.errors||[]).map(e=>Number(e.code)).filter(Number.isFinite);
+    if(process.env.BIR_FAILURE_REASON_PATH)
+      writeFileSync(process.env.BIR_FAILURE_REASON_PATH,JSON.stringify({http:response.status,codes}));
+    throw Error(`D1 HTTP ${response.status}; codes=${codes.join(',')}` +
+      (codes.includes(7500)?'; daily free D1 quota exhausted; resets at 00:00 UTC':''));
+  }
   if (!body.success || !Array.isArray(body.result) || body.result.length !== statements.length ||
       body.result.some(result => result.success === false)) {
     throw Error(`D1 query failed: ${JSON.stringify(body.errors ?? body.result?.map(r => r.error ?? null))}`);
@@ -89,3 +96,4 @@ if (fullDetails) {
   console.log(JSON.stringify({nightlyUsage:{rowsWritten,rowsRead}}));
   if(!details.ok) process.exitCode=1;
 }
+
