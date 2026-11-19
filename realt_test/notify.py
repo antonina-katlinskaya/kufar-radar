@@ -164,6 +164,53 @@ class SisterHistory:
     def set_state(self,key,value): return self.db.set_state(self.MAP.get(key,key),value)
 
 
+BASELINE_V2_KEY = 'realt_sister_activation_baseline_v2'
+MAX_AUTO_REVIEWS_PER_RUN = 3
+
+
+def initialize_sister_baseline(db, result):
+    """One-time no-send checkpoint. Never acknowledge uncertain Telegram delivery."""
+    from datetime import datetime, timezone, timedelta
+    from realt_test.dedup import fingerprint
+    if db.get_state(BASELINE_V2_KEY):
+        return False
+    source=result.get('source') or {}
+    stamp=source.get('latest_snapshot_at')
+    bir_stamp=result.get('bir_checked_at')
+    if not stamp or not bir_stamp or result.get('notification_paused') or result.get('source_stale'):
+        raise RuntimeError('Cannot baseline an incomplete or paused Realt audit')
+    now=datetime.now(timezone.utc)
+    for label,value in [('Realt',stamp),('Bir',bir_stamp)]:
+        at=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+        if at.tzinfo is None or not timedelta(minutes=-5)<=now-at<=timedelta(minutes=90 if label=='Realt' else 35):
+            raise RuntimeError(label+' snapshot is not fresh; no baseline saved')
+    items=result.get('items')
+    if not isinstance(items,list) or result.get('checked') != len(items):
+        raise RuntimeError('Incomplete Realt review result; no baseline saved')
+    checkpoint={'snapshot_at':stamp, 'fingerprints':{
+        str(item['uuid']):fingerprint(item) for item in items
+        if item.get('uuid') and item.get('status') in ('REVIEW','BACKDATED','RESOLVED')
+    }}
+    db.set_state(BASELINE_V2_KEY,json.dumps(checkpoint,ensure_ascii=False,sort_keys=True))
+    return True
+
+
+def filter_post_baseline(items, baseline):
+    """Only fresh observations changing after the activation snapshot can alert."""
+    from datetime import datetime
+    from realt_test.dedup import fingerprint
+    cutoff=datetime.fromisoformat(baseline['snapshot_at'].replace('Z','+00:00'))
+    result=[]
+    for item in items:
+        stamp=item.get('last_seen_at')
+        if not stamp:continue
+        observed=datetime.fromisoformat(str(stamp).replace('Z','+00:00'))
+        if observed.tzinfo is None or observed<=cutoff:continue
+        if baseline.get('fingerprints',{}).get(str(item.get('uuid'))) == fingerprint(item):continue
+        result.append(item)
+    return result
+
+
 def main():
     permitted = (os.getenv('GITHUB_REF') == 'refs/heads/' + BRANCH or (os.getenv('GITHUB_REF') == 'refs/heads/main' and os.getenv('GITHUB_WORKFLOW') == 'Realt scheduled owner-only'))
     if not permitted or os.getenv('GITHUB_REPOSITORY') != REPOSITORY:
@@ -211,11 +258,21 @@ def main():
         baseline_raw=owner_store.get_state('realt_private_owner_review_fingerprints_v1') or '{}'
         owner_store.set_state(baseline_key,baseline_raw)
     baseline=json.loads(baseline_raw)
+    # Fail closed until a separate, fresh, no-send activation baseline is recorded.
+    activation_raw=owner_store.get_state(BASELINE_V2_KEY)
+    if not activation_raw:
+        print(json.dumps({'notification_sent':False,'reason':'Sister activation baseline not established'}))
+        return
+    activation=json.loads(activation_raw)
     from realt_test.dedup import fingerprint
     cases=[]
     for label,recipient,store in [('sister',SISTER_ID,sister_store)]:
         unsent,_=pending(store,result)
         unsent=[item for item in unsent if baseline.get(str(item['uuid']))!=fingerprint(item)]
+        unsent=filter_post_baseline(unsent,activation)
+        if len(unsent)>MAX_AUTO_REVIEWS_PER_RUN:
+            print(json.dumps({'notification_sent':False,'reason':'Too many new Realt reviews; manual verification required','new_count':len(unsent)}))
+            return
         if unsent:cases.append((label,recipient,store,unsent))
     if not cases:
         print(json.dumps({'notification_sent':False,'reason':'No new cases for either recipient'}))
