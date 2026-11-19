@@ -51,6 +51,9 @@ jobs:
       - name: Preview only new reviews
         if: steps.bir.outputs.ready == 'true'
         run: python -m realt_test.check_pending
+      - name: Establish safe sister baseline without Telegram delivery
+        if: steps.bir.outputs.ready == 'true'
+        run: python -m realt_test.baseline_sister
       - name: Deliver to verified personal chat only
         # TEMPORARY SAFETY PAUSE: prevent backlogged historical Realt reviews from flooding sister.
         # Keep source collection, reconciliation and owner-only technical health active.
