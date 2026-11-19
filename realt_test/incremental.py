@@ -161,12 +161,16 @@ def release_snapshot(entry,reader=None):
         for member,digest in manifest['sha256'].items():
             if hashlib.sha256(z.read(member)).hexdigest()!=digest:raise RuntimeError('Release member checksum mismatch')
         if manifest['raw_members']!=entry['raw_members']:raise RuntimeError('Release RAW membership mismatch')
+        total_rows=0
         for member in manifest['raw_members']:
             data=json.loads(gzip.decompress(z.read(member)))
             if data['snapshot_at']!=entry['snapshot_at']:raise RuntimeError('Release RAW time mismatch')
             rows=data['minsk_mir_objects']
-            if len(rows)!=entry['rows']:raise RuntimeError('Release RAW count mismatch')
+            if not isinstance(rows,list):raise RuntimeError('Release RAW objects missing')
+            total_rows+=len(rows)
             out.append((data['snapshot_at'],rows))
+        # entry.rows counts the complete packet, not each individual source file.
+        if total_rows!=entry['rows']:raise RuntimeError('Release RAW count mismatch')
     return out
 
 
