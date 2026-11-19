@@ -28,8 +28,8 @@ class SafetyTests(unittest.TestCase):
         baseline=json.loads(db.get_state(BASELINE_V2_KEY))
         self.assertEqual(filter_post_baseline([old],baseline),[])
         self.assertEqual(filter_post_baseline([{**old,'last_seen_at':stamp(-1)}],baseline),[])
-        self.assertEqual(len(filter_post_baseline([item(price='49377',last=stamp(-1))],baseline)),1)
-        self.assertEqual(len(filter_post_baseline([item(uid='new',last=stamp(-1))],baseline)),1)
+        self.assertEqual(len(filter_post_baseline([item(price='49377',last=stamp(1))],baseline)),1)
+        self.assertEqual(len(filter_post_baseline([item(uid='new',last=stamp(1))],baseline)),1)
 
     def test_no_baseline_for_missing_or_incomplete_source(self):
         for report in (
