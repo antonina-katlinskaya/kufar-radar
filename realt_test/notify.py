@@ -199,6 +199,8 @@ def filter_post_baseline(items, baseline):
     cutoff=datetime.fromisoformat(baseline['snapshot_at'].replace('Z','+00:00'))
     result=[]
     for item in items:
+        # Archived or removed ads are not new active employee violations.
+        if item.get('present_in_latest_snapshot') is not True:continue
         stamp=item.get('last_seen_at')
         if not stamp:continue
         observed=datetime.fromisoformat(str(stamp).replace('Z','+00:00'))
