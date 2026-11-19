@@ -1,0 +1,62 @@
+name: Remove verified Realt flood from sister Telegram chat (19 Nov only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/realt-delete-flood-20261119.yml'
+permissions:
+  contents: read
+jobs:
+  delete-exact-messages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - name: Delete only messages confirmed in Realt 19 Nov delivery receipt
+        shell: python
+        run: |
+          import json,os,time,urllib.request,urllib.error
+          token=os.environ.get("TELEGRAM_BOT_TOKEN")
+          if not token:
+              raise SystemExit("FAILED: Telegram token missing; no deletions attempted")
+          chat_id=1037292158
+          ids=list(range(2121,2272))+list(range(2275,2327))
+          assert len(ids)==203 and len(set(ids))==203
+          base="https://api.telegram.org/bot"+token+"/"
+          def call(method,payload):
+              request=urllib.request.Request(base+method,data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"},method="POST")
+              try:
+                  with urllib.request.urlopen(request,timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as e:
+                  try:
+                      return json.loads(e.read().decode())
+                  except Exception:
+                      return {"ok":False,"error_code":e.code,"description":"HTTP error"}
+          info=call("getChat",{"chat_id":chat_id})
+          if not info.get("ok") or str(info["result"].get("id"))!=str(chat_id) or info["result"].get("type")!="private":
+              raise SystemExit("FAILED: sister private chat verification failed; no deletions attempted")
+          deleted=[];missing=[];failed=[]
+          for msg_id in ids:
+              for attempt in range(4):
+                  result=call("deleteMessage",{"chat_id":chat_id,"message_id":msg_id})
+                  if result.get("ok"):
+                      deleted.append(msg_id)
+                      break
+                  description=str(result.get("description") or "")
+                  if result.get("error_code")==429 and attempt<3:
+                      time.sleep(min(10,int(result.get("parameters",{}).get("retry_after",2))+1))
+                      continue
+                  if "message to delete not found" in description.lower():
+                      missing.append(msg_id)
+                  else:
+                      failed.append({"id":msg_id,"code":result.get("error_code"),"error":description[:120]})
+                  break
+              time.sleep(.15)
+          print(json.dumps({"attempted":len(ids),"deleted":len(deleted),"already_missing":len(missing),"failed":len(failed),"failed_examples":failed[:15],"deleted_ids":deleted,"missing_ids":missing},ensure_ascii=False))
+          if os.getenv("GITHUB_STEP_SUMMARY"):
+              with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+                  f.write("Realt flood deletion: attempted %d, deleted %d, missing %d, failed %d\n"%(len(ids),len(deleted),len(missing),len(failed)))
+          if failed:
+              raise SystemExit("PARTIAL: Telegram rejected some deletions; see exact IDs above")
