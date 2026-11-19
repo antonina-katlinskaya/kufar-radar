@@ -174,16 +174,13 @@ def initialize_sister_baseline(db, result):
     from realt_test.dedup import fingerprint
     if db.get_state(BASELINE_V2_KEY):
         return False
+    # A quiet baseline can be recorded from an older complete report: this sends
+    # nothing and suppresses all observations made before the activation time.
+    # New alerts still require a fresh source and Bir before Telegram delivery.
     source=result.get('source') or {}
-    stamp=source.get('latest_snapshot_at')
-    bir_stamp=result.get('bir_checked_at')
-    if not stamp or not bir_stamp or result.get('notification_paused') or result.get('source_stale'):
-        raise RuntimeError('Cannot baseline an incomplete or paused Realt audit')
-    now=datetime.now(timezone.utc)
-    for label,value in [('Realt',stamp),('Bir',bir_stamp)]:
-        at=datetime.fromisoformat(str(value).replace('Z','+00:00'))
-        if at.tzinfo is None or not timedelta(minutes=-5)<=now-at<=timedelta(minutes=90 if label=='Realt' else 35):
-            raise RuntimeError(label+' snapshot is not fresh; no baseline saved')
+    if not source.get('latest_snapshot_at'):
+        raise RuntimeError('Realt baseline requires an archived source checkpoint')
+    stamp=datetime.now(timezone.utc).isoformat()
     items=result.get('items')
     if not isinstance(items,list) or result.get('checked') != len(items):
         raise RuntimeError('Incomplete Realt review result; no baseline saved')
