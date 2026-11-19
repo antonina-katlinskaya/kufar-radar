@@ -14,7 +14,8 @@ def stamp(minutes):
 def item(uid='abc',price='49376',last=None):
     return {'uuid':uid,'person':'Жанна Вакуленчик','status':'REVIEW',
             'rooms':'1','area':'31.35','price':price,'currency':'978',
-            'reason':'No room/area BIR match','last_seen_at':last or stamp(-10)}
+            'reason':'No room/area BIR match','last_seen_at':last or stamp(-10),
+            'present_in_latest_snapshot':True}
 
 class SafetyTests(unittest.TestCase):
     def test_old_backlog_and_identical_message_suppressed(self):
@@ -30,6 +31,8 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(filter_post_baseline([{**old,'last_seen_at':stamp(-1)}],baseline),[])
         self.assertEqual(len(filter_post_baseline([item(price='49377',last=stamp(1))],baseline)),1)
         self.assertEqual(len(filter_post_baseline([item(uid='new',last=stamp(1))],baseline)),1)
+        self.assertEqual(filter_post_baseline([{**item(uid='removed',last=stamp(1)),
+            'present_in_latest_snapshot':False}],baseline),[])
 
     def test_no_baseline_for_missing_or_incomplete_source(self):
         for report in (
