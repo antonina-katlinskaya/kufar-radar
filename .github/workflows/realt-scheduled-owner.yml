@@ -52,7 +52,9 @@ jobs:
         if: steps.bir.outputs.ready == 'true'
         run: python -m realt_test.check_pending
       - name: Deliver to verified personal chat only
-        if: steps.bir.outputs.ready == 'true'
+        # TEMPORARY SAFETY PAUSE: prevent backlogged historical Realt reviews from flooding sister.
+        # Keep source collection, reconciliation and owner-only technical health active.
+        if: ${{ false && steps.bir.outputs.ready == 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python -m realt_test.notify
