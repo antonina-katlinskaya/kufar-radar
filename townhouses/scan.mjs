@@ -90,24 +90,27 @@ async function post(pathName,form){
 
 async function main(){
   const previous=JSON.parse(fs.readFileSync(stateFile,'utf8'));
-  const base={'object[]':project,orderby:'nomerPomeschenia',limit:'5000'};
-  const [a,d]=await Promise.all([post('get-search-objects-in-building/',{...base,ascdesc:'ASC'}),post('get-search-objects-in-building/',{...base,ascdesc:'DESC'})]);
-  console.log('TOWNHOUSE_SOURCE_DIAG',JSON.stringify({rows:extractRows(a).length,descRows:extractRows(d).length,townhouseLinks:(a.split('/townhouses/').length-1),nearTownhouse:(a.match(/.{0,95}townhouses.{0,95}/i)||[])[0]?.slice(0,190),firstRowIds:extractRows(a).slice(0,2).map(x=>x.id),htmlLength:a.length}));
-  let found; let source='in_building';
-  try { found=validatePairs(extractRows(a),extractRows(d),previous); }
-  catch(firstError) {
-    const broad={type:'live','object[]':project,orderby:'cena',limit:'5000'};
-    const [x,y]=await Promise.all([post('get-search-objects-new/',{...broad,ascdesc:'ASC'}),post('get-search-objects-new/',{...broad,ascdesc:'DESC'})]);
-    console.log('TOWNHOUSE_FALLBACK_DIAG',JSON.stringify({rows:extractRows(x).length,descRows:extractRows(y).length,townhouseLinks:(x.split('/townhouses/').length-1),knownA:x.includes('903296fc-30ef-47a8-98c9-e763ce6e86b2'),knownB:x.includes('0941ab22-f64f-4ac0-ae57-7782bd7a4c4c'),knownC:x.includes('1948ab9e-9b17-44e9-95df-28e04f5ceb6f'),anyHouseHref:(x.match(/housename.{0,180}/i)||[])[0]?.slice(0,180),descKnown:[y.includes('903296fc-30ef-47a8-98c9-e763ce6e86b2'),y.includes('0941ab22-f64f-4ac0-ae57-7782bd7a4c4c'),y.includes('1948ab9e-9b17-44e9-95df-28e04f5ceb6f')],descLinks:(y.split('/townhouses/').length-1),descFirst:extractRows(y).slice(0,2).map(x=>x.id),htmlLength:x.length}));
-    try { found=validatePairs(extractRows(x),extractRows(y),previous); source='search_new'; }
-    catch(secondError) { throw Error('Both Bir sources unverified: '+firstError.message+'; '+secondError.message); }
+  async function collectPaged(direction){
+    const results=[];const seen=new Set();let complete=false;
+    for(let offset=0;offset<6000;offset+=500){
+      const html=await post('get-search-objects-new/',{type:'live','object[]':project,orderby:'cena',ascdesc:direction,limit:'500',offset:String(offset)});
+      const page=extractRows(html);
+      if(!page.length&&offset===0)throw Error('Empty Bir search');
+      for(const item of page){if(seen.has(item.id))throw Error('Bir pagination repeated ID '+item.id);seen.add(item.id);results.push(item);}
+      if(page.length<500){complete=true;break;}
+    }
+    if(!complete)throw Error('Bir pagination limit exceeded');
+    return results;
   }
+  const [asc,desc]=await Promise.all([collectPaged('ASC'),collectPaged('DESC')]);
+  const found=validatePairs(asc,desc,previous);
+  const source='search_new_complete_pagination';
   const now=new Date().toISOString();
   const {next,events}=reconcile(previous,found,now);
   // Reduce repository writes: only save when availability, identity or prices change.
   const snapshot=x=>Object.fromEntries(Object.entries(x).map(([k,v])=>[k,{present:v.present,missingChecks:v.missingChecks,unit:v.unit,area:v.area,priceFastEur:v.priceFastEur}]));
   const changed=JSON.stringify(snapshot(next.items))!==JSON.stringify(snapshot(previous.items))||events.length;
   if(changed){fs.writeFileSync(stateFile,JSON.stringify(next,null,2)+'\n');fs.writeFileSync(csvFile,csvRows(next.items));}
-  console.log(JSON.stringify({ok:true,source,totalRows:extractRows(a).length,townhouses:found.length,new:events.filter(x=>x.kind==='new').length,returned:events.filter(x=>x.kind==='returned').length,changed,saved:changed,now}));
+  console.log(JSON.stringify({ok:true,source,totalRows:asc.length,townhouses:found.length,new:events.filter(x=>x.kind==='new').length,returned:events.filter(x=>x.kind==='returned').length,changed,saved:changed,now}));
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(e=>{console.error('TOWNHOUSE_WATCH_FAILED '+e.message);process.exitCode=1});
