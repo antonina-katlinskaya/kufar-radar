@@ -98,7 +98,7 @@ async function main(){
   catch(firstError) {
     const broad={type:'live','object[]':project,orderby:'cena',limit:'5000'};
     const [x,y]=await Promise.all([post('get-search-objects-new/',{...broad,ascdesc:'ASC'}),post('get-search-objects-new/',{...broad,ascdesc:'DESC'})]);
-    console.log('TOWNHOUSE_FALLBACK_DIAG',JSON.stringify({rows:extractRows(x).length,descRows:extractRows(y).length,townhouseLinks:(x.split('/townhouses/').length-1),knownA:x.includes('903296fc-30ef-47a8-98c9-e763ce6e86b2'),knownB:x.includes('0941ab22-f64f-4ac0-ae57-7782bd7a4c4c'),knownC:x.includes('1948ab9e-9b17-44e9-95df-28e04f5ceb6f'),anyHouseHref:(x.match(/housename.{0,180}/i)||[])[0]?.slice(0,180),htmlLength:x.length}));
+    console.log('TOWNHOUSE_FALLBACK_DIAG',JSON.stringify({rows:extractRows(x).length,descRows:extractRows(y).length,townhouseLinks:(x.split('/townhouses/').length-1),knownA:x.includes('903296fc-30ef-47a8-98c9-e763ce6e86b2'),knownB:x.includes('0941ab22-f64f-4ac0-ae57-7782bd7a4c4c'),knownC:x.includes('1948ab9e-9b17-44e9-95df-28e04f5ceb6f'),anyHouseHref:(x.match(/housename.{0,180}/i)||[])[0]?.slice(0,180),descKnown:[y.includes('903296fc-30ef-47a8-98c9-e763ce6e86b2'),y.includes('0941ab22-f64f-4ac0-ae57-7782bd7a4c4c'),y.includes('1948ab9e-9b17-44e9-95df-28e04f5ceb6f')],descLinks:(y.split('/townhouses/').length-1),descFirst:extractRows(y).slice(0,2).map(x=>x.id),htmlLength:x.length}));
     try { found=validatePairs(extractRows(x),extractRows(y),previous); source='search_new'; }
     catch(secondError) { throw Error('Both Bir sources unverified: '+firstError.message+'; '+secondError.message); }
   }
