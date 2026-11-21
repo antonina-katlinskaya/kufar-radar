@@ -21,9 +21,12 @@ def claim():
     if not daytime():
         print('TOWNHOUSE_ALERT_QUIET_HOURS: pending retained')
         return
-    for a in state['outbox']:
-        if a['status']=='pending':
-            a.update(status='claimed',claimRun=RUN,claimedAt=datetime.now(ZoneInfo('Europe/Minsk')).isoformat())
+    pending=[a for a in state['outbox'] if a['status']=='pending']
+    if not pending:
+        print('TOWNHOUSE_CLAIMED 0')
+        return
+    for a in pending:
+        a.update(status='claimed',claimRun=RUN,claimedAt=datetime.now(ZoneInfo('Europe/Minsk')).isoformat())
     write(state)
     print('TOWNHOUSE_CLAIMED '+str(sum(x['status']=='claimed' and x.get('claimRun')==RUN for x in state['outbox'])))
 
