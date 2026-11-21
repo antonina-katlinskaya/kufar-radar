@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "checkedAt": "2026-11-21T00:00:00Z",
+  "items": {
+    "903296fc-30ef-47a8-98c9-e763ce6e86b2": {"id":"903296fc-30ef-47a8-98c9-e763ce6e86b2","townhouse":true,"unit":"16.18","area":209.3,"priceFastEur":563226,"url":"https://bir.by/object/903296fc-30ef-47a8-98c9-e763ce6e86b2","present":true,"missingChecks":0,"firstSeen":"2026-11-21T00:00:00Z","lastSeen":"2026-11-21T00:00:00Z"},
+    "0941ab22-f64f-4ac0-ae57-7782bd7a4c4c": {"id":"0941ab22-f64f-4ac0-ae57-7782bd7a4c4c","townhouse":true,"unit":"16.22","area":210.4,"priceFastEur":566186,"url":"https://bir.by/object/0941ab22-f64f-4ac0-ae57-7782bd7a4c4c","present":true,"missingChecks":0,"firstSeen":"2026-11-21T00:00:00Z","lastSeen":"2026-11-21T00:00:00Z"},
+    "1948ab9e-9b17-44e9-95df-28e04f5ceb6f": {"id":"1948ab9e-9b17-44e9-95df-28e04f5ceb6f","townhouse":true,"unit":"16.19","area":210.9,"priceFastEur":567532,"url":"https://bir.by/object/1948ab9e-9b17-44e9-95df-28e04f5ceb6f","present":true,"missingChecks":0,"firstSeen":"2026-11-21T00:00:00Z","lastSeen":"2026-11-21T00:00:00Z"}
+  },
+  "outbox": []
+}

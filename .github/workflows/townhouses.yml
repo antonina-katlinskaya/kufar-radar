@@ -1,0 +1,56 @@
+name: Townhouses Bir — availability radar
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '11,26,41,56 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'townhouses/scan.mjs'
+      - 'townhouses/scan.test.mjs'
+      - 'townhouses/notify.py'
+      - '.github/workflows/townhouses.yml'
+permissions:
+  contents: write
+concurrency:
+  group: kufar-townhouses-bir-radar
+  cancel-in-progress: false
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify isolated monitoring logic
+        run: node --test townhouses/scan.test.mjs
+      - name: Collect complete Bir townhouse snapshot (no publishing)
+        run: node townhouses/scan.mjs
+      - name: Save changes and pending alerts
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add townhouses/state.json townhouses/current.csv
+          if ! git diff --cached --quiet; then git commit -m 'townhouses: save verified Bir changes [skip ci]'; git push; fi
+      - name: Claim owner-only alerts before Telegram side effect
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python -m townhouses.notify claim
+      - name: Persist alert claim before sending
+        run: |
+          git add townhouses/state.json
+          if ! git diff --cached --quiet; then git commit -m 'townhouses: claim owner alerts [skip ci]'; git push; fi
+      - name: Notify owner about new or returned townhouse
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python -m townhouses.notify deliver
+      - name: Persist Telegram receipt
+        if: success()
+        run: |
+          git add townhouses/state.json
+          if ! git diff --cached --quiet; then git commit -m 'townhouses: save delivery receipt [skip ci]'; git push; fi
