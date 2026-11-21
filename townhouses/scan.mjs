@@ -92,7 +92,7 @@ async function main(){
   const previous=JSON.parse(fs.readFileSync(stateFile,'utf8'));
   const base={'object[]':project,orderby:'nomerPomeschenia',limit:'5000'};
   const [a,d]=await Promise.all([post('get-search-objects-in-building/',{...base,ascdesc:'ASC'}),post('get-search-objects-in-building/',{...base,ascdesc:'DESC'})]);
-  console.log('TOWNHOUSE_SOURCE_DIAG',JSON.stringify({rows:extractRows(a).length,descRows:extractRows(d).length,townhouseLinks:(a.match(/townhouses\\//gi)||[]).length,nearTownhouse:(a.match(/.{0,95}townhouses.{0,95}/i)||[])[0]?.slice(0,190),firstRowIds:extractRows(a).slice(0,2).map(x=>x.id),htmlLength:a.length}));
+  console.log('TOWNHOUSE_SOURCE_DIAG',JSON.stringify({rows:extractRows(a).length,descRows:extractRows(d).length,townhouseLinks:(a.split('/townhouses/').length-1),nearTownhouse:(a.match(/.{0,95}townhouses.{0,95}/i)||[])[0]?.slice(0,190),firstRowIds:extractRows(a).slice(0,2).map(x=>x.id),htmlLength:a.length}));
   let found; let source='in_building';
   try { found=validatePairs(extractRows(a),extractRows(d),previous); }
   catch(firstError) {
