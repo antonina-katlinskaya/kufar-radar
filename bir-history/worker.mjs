@@ -1,5 +1,5 @@
 // The endpoint can be changed without touching historical D1 data.
-const BASE = new URL(process.env.BIR_AJAX_BASE_URL || 'https://birby.by/ajax/').href;
+const BASE = new URL((typeof process !== 'undefined' ? process.env?.BIR_AJAX_BASE_URL : null) || 'https://birby.by/ajax/').href;
 const REFERER = new URL('/', BASE).href;
 const PROJECT = 'Minsk World';
 const RESIDENTIAL = new Set(['Апартаменты', 'Квартира', 'Пентхаус']);
