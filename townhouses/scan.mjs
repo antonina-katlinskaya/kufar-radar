@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const stateFile=path.join(__dirname,'state.json');
 const csvFile=path.join(__dirname,'current.csv');
-const BASE='https://bir.by/ajax/';
+const BASE='https://birby.by/ajax/';
 const project='Minsk World';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const text=s=>String(s??'').replace(/&nbsp;|&#160;/gi,' ').replace(/&amp;/gi,'&').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
@@ -28,7 +28,7 @@ export function extractRows(html) {
     const area=Number((cells.find(x=>/^2\d{2}[.,]\d{1,2}$/.test(x))||'').replace(',','.'));
     if(!Number.isFinite(area)||area<100)throw Error('Townhouse area not valid '+id);
     const euros=[...raw.matchAll(/class\s*=\s*["'][^"']*\btprice\b[^"']*["'][^>]*>([\s\S]*?)<\/span\s*>/gi)].map(x=>Number(text(x[1]).replace(/[^\d,\.]/g,'').replace(',','.'))).filter(Number.isFinite);
-    out.push({id,townhouse:true,unit,area,priceFastEur:euros.at(-1)||null,url:'https://bir.by/object/'+id,source:'Bir search table'});
+    out.push({id,townhouse:true,unit,area,priceFastEur:euros.at(-1)||null,url:'https://birby.by/object/'+id,source:'Bir search table'});
   }
   if(out.length!==ids.size)throw Error('Source IDs inconsistent');
   return out;
@@ -79,7 +79,7 @@ async function post(pathName,form){
   let reason;
   for(let attempt=1;attempt<=3;attempt++){
     try{
-      const r=await fetch(BASE+pathName,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest','Referer':'https://bir.by/search-by-parameters/','User-Agent':'Mozilla/5.0'},body:new URLSearchParams(form),signal:AbortSignal.timeout(25000)});
+      const r=await fetch(BASE+pathName,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest','Referer':'https://birby.by/search-by-parameters/','User-Agent':'Mozilla/5.0'},body:new URLSearchParams(form),signal:AbortSignal.timeout(25000)});
       if(r.ok)return await r.text();
       reason=Error('Bir HTTP '+r.status);
     }catch(e){reason=e;}

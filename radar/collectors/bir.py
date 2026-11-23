@@ -74,7 +74,7 @@ class BirCollector:
             ctx=await browser.new_context(locale='ru-RU',user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36')
             page=await ctx.new_page()
             await page.goto(settings.bir_search_url,wait_until='domcontentloaded',timeout=90000)
-            endpoint='https://bir.by/ajax/get-search-objects-new/'
+            endpoint='https://birby.by/ajax/get-search-objects-new/'
             for room_filter,room_count in ROOM_FILTERS:
                 form=[('type','live'),('object[]','Minsk World'),('comnat[]',room_filter),('cenaOt',''),('cenaZaKvOt',''),('obschPloschadOt',''),('orderby','cena'),('ascdesc','ASC'),('limit','5000')]
                 resp=await ctx.request.post(endpoint,headers={'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Referer':settings.bir_search_url},data=urlencode(form))
@@ -86,7 +86,7 @@ class BirCollector:
             # New Minsk World buildings often have an empty text address in Bir, but the
             # object-detail endpoint provides a stable building GPS point. One detail request
             # per building is enough; attach that GPS to every unit in the same building.
-            detail_endpoint='https://bir.by/ajax/get-object-by-tablerow-click/'
+            detail_endpoint='https://birby.by/ajax/get-object-by-tablerow-click/'
             reps={}
             for x in found.values():
                 if x.building_name and x.building_name not in reps:
