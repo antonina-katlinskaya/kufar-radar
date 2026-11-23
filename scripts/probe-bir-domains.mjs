@@ -34,3 +34,11 @@ for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
     overlapOfSmaller:shared/Math.min(a.size,b.size)}));
 }
 if(!results['https://birby.by'].listing.uniqueIds?.length) process.exitCode=1;
+
+const roomUrl='https://birby.by/ajax/get-search-objects-new/';
+const roomForm=new URLSearchParams([['type','live'],['object[]','Minsk World'],['comnat[]','1-room'],['cenaOt',''],['cenaZaKvOt',''],['obschPloschadOt',''],['orderby','cena'],['ascdesc','ASC'],['limit','5000']]);
+const roomResponse=await fetch(roomUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Referer':'https://birby.by/search-by-parameters/','User-Agent':'Mozilla/5.0'},body:roomForm,signal:AbortSignal.timeout(20000)});
+const roomHtml=await roomResponse.text();
+const roomRows=[...roomHtml.matchAll(/data-loadobject="([0-9a-f-]{36})"/gi)].length;
+console.log(JSON.stringify({phase:'room_search',status:roomResponse.status,finalUrl:roomResponse.url,rows:roomRows,bodyLength:roomHtml.length}));
+if(!roomResponse.ok||!roomResponse.url.startsWith('https://birby.by/ajax/')||roomRows===0)process.exitCode=1;
