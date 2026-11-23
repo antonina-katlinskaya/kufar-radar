@@ -3,7 +3,7 @@ name: Bir history scan
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/bir-history.yml', 'bir-history/run.mjs']
+    paths: ['.github/workflows/bir-history.yml', 'bir-history/run.mjs', 'bir-history/worker.mjs']
   workflow_dispatch:
   schedule:
     - cron: '2 * * * *'
