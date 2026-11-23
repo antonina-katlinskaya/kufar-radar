@@ -1,0 +1,35 @@
+name: BIR independent inventory and EUR health watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 15 minutes during Minsk daytime. Code enforces 08:00-22:00 quiet-hour policy.
+    - cron: '0,15,30,45 4-18 * * *'
+  push:
+    paths:
+      - 'notifications/bir_public_watchdog.py'
+      - '.github/workflows/bir-independent-watchdog.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bir-independent-health-watchdog
+  cancel-in-progress: false
+
+jobs:
+  external-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check BIR inventory and EUR prices separately
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          BIR_OWNER_CHAT_ID: ${{ secrets.BIR_OWNER_CHAT_ID }}
+        run: python -m notifications.bir_public_watchdog
