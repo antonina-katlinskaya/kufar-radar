@@ -1,0 +1,37 @@
+name: Check Cloudflare Worker API access (read-only)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/check-cf-worker-access.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Test configured API token access without printing credentials
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_D1_API_TOKEN: ${{ secrets.CF_D1_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os,urllib.request,urllib.error
+          account=os.environ.get('CF_ACCOUNT_ID','')
+          for label in ('CF_D1_API_TOKEN','CLOUDFLARE_API_TOKEN'):
+            token=os.environ.get(label,'')
+            if not token:
+              print(f'{label}: not configured');continue
+            url=f'https://api.cloudflare.com/client/v4/accounts/{account}/workers/scripts/bir-radar-diagnostic'
+            req=urllib.request.Request(url,headers={'Authorization':'Bearer '+token})
+            try:
+              with urllib.request.urlopen(req,timeout=20) as r:
+                body=r.read()
+                print(f'{label}: GET status={r.status}; script_bytes={len(body)}; content_type={r.headers.get("content-type")}')
+            except urllib.error.HTTPError as e:
+              print(f'{label}: GET status={e.code}')
+            except Exception as e:
+              print(f'{label}: request failed {type(e).__name__}')
+          PY
