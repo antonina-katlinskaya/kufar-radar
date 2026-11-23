@@ -90,7 +90,7 @@ def format_alert(row):
 def buttons(ad_id, bir_id):
     return [[
         {'text': 'Открыть Куфар', 'url': f'https://re.kufar.by/vi/{ad_id}'},
-        {'text': 'Открыть Bir.by', 'url': f'https://bir.by/object/{bir_id}/'},
+        {'text': 'Открыть Bir.by', 'url': f'https://birby.by/object/{bir_id}/'},
     ]]
 
 
