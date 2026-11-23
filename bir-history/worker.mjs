@@ -1,4 +1,6 @@
-const BASE = 'https://bir.by/ajax/';
+// The endpoint can be changed without touching historical D1 data.
+const BASE = new URL(process.env.BIR_AJAX_BASE_URL || 'https://birby.by/ajax/').href;
+const REFERER = new URL('/', BASE).href;
 const PROJECT = 'Minsk World';
 const RESIDENTIAL = new Set(['Апартаменты', 'Квартира', 'Пентхаус']);
 const DETAIL_LIMIT = 24;
@@ -17,7 +19,7 @@ async function bir(path, params) {
         headers:{
           'Content-Type':'application/x-www-form-urlencoded',
           'X-Requested-With':'XMLHttpRequest',
-          'Referer':'https://bir.by/',
+          'Referer':REFERER,
           'User-Agent':'Mozilla/5.0'
         },
         body:new URLSearchParams(params),
@@ -158,6 +160,14 @@ export async function scan(env) {
     const excluded=new Set((await db.prepare('SELECT id FROM bir_excluded').all()).results.map(x=>x.id));
     const active=previous.filter(x=>x.present).length;
     if(parsed < active * 0.9) throw Error(`Suspicious drop: rows=${parsed}, active=${active}`);
+    // A domain migration must not reclassify the old stock as disappeared/new.
+    // Reject before ANY object/event writes when object identities don't align.
+    if(active >= 100) {
+      const knownPresent=new Set(previous.filter(x=>x.present).map(x=>x.id));
+      const shared=rows.filter(x=>knownPresent.has(x.id)).length;
+      if(shared < Math.ceil(active * 0.9))
+        throw Error(`Bir migration ID mismatch: shared=${shared}, active=${active}, parsed=${parsed}; no inventory writes`);
+    }
     const seen=new Set();
     const writes=[];let appeared=0, changed=0, excludedNew=0;
     for(const r of rows) {
