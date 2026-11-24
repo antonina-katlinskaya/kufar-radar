@@ -1,6 +1,7 @@
 import json, hashlib
 from datetime import datetime, timezone
 from .models import KufarListing, BirListing
+from .years import kufar_year, bir_year, verified_bir_year
 
 class InvalidKufarSnapshot(RuntimeError):
     """The incoming profile snapshot failed the existing size guard."""
@@ -152,6 +153,8 @@ def kufar_change_relevant(old,new):
         return True
     if not _same(old.get('rooms'),new.rooms):
         return True
+    if kufar_year(old.get('raw_json')) != kufar_year(new.raw):
+        return True
     if _raw_list_time(old.get('raw_json')) != _raw_list_time(new.raw):
         return True
     if _paid_services(old.get('raw_json')) != _paid_services(new.raw):
@@ -190,7 +193,7 @@ def save_kufar(db,items,profile_id):
 
     for x in items:
         seen.add(x.ad_id)
-        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,_raw_list_time(x.raw),_paid_services(x.raw)])
+        f=fp([_source_price(x.raw) or (x.price_eur,x.price_byn),x.area,x.rooms,kufar_year(x.raw),_raw_list_time(x.raw),_paid_services(x.raw)])
         old=cur.get(x.ad_id)
         data_changed=(not old or not old.get('active') or kufar_change_relevant(old,x))
         if not data_changed:
@@ -230,6 +233,8 @@ def save_bir(db,items):
             ('floor',x.floor),
             ('official_address',x.official_address)
         ]))
+        if old and (bir_year(old.get('raw_json')) != bir_year(x.raw) or verified_bir_year(old.get('raw_json')) != verified_bir_year(x.raw)):
+            data_changed=True
         reappeared=bool(old and not old.get('active'))
         if not data_changed and not reappeared:
             continue
