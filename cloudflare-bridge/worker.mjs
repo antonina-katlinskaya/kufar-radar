@@ -126,7 +126,7 @@ async function scanMarket(env) {
 // Schedule by the last successful poll, not by the last changed listing.
 const HALF_HOUR_PROFILES = new Set(['11077002','11080367','8517496','11162944','10704279']);
 export function profileIntervalMinutes(profile) {
-  return String(profile)==='11093294' ? 10 : HALF_HOUR_PROFILES.has(String(profile)) ? 30 : 60;
+  return String(profile)==='11093294' ? 15 : HALF_HOUR_PROFILES.has(String(profile)) ? 30 : 60;
 }
 export function profileDue(profile,lastSuccess,now=Date.now()) {
   const t=Date.parse(lastSuccess || '');
