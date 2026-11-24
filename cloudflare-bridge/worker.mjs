@@ -123,5 +123,30 @@ async function scanMarket(env) {
   return {apiTotal:total,fetched:seen,mw,added,changed,discoveredProfiles:newProfiles.size,nextPage:deepPage};
  }catch(e){await db.prepare('INSERT INTO kufar_import_scans(scan_id,observed_at,profile_id,api_total,seen_total,mw_total,status,error) VALUES(?,?,?,?,?,?,?,?)').bind(scanId,now,'market',total,seen,mw,'rejected',String(e)).run();throw e;}
 }
-export async function scan(env,group=null,priorityProfiles=[]) {if(!env.BIR_DB)throw Error('BIR_DB missing');await ensureSchema(env.BIR_DB);const profiles=(await env.BIR_DB.prepare("SELECT profile_id FROM kufar_profiles WHERE enabled=1 AND source='v7_census' ORDER BY profile_id").all()).results.map(x=>x.profile_id);const resolvedGroup=group??Math.floor(new Date().getUTCMinutes()/15)%2;const priority=new Set((priorityProfiles||[]).map(String));const selected=profiles.filter((profile,i)=>i%2===resolvedGroup||priority.has(profile));const results=[];for(const profile of selected)results.push(await scanProfile(env,profile));return {ok:true,group:resolvedGroup,profilesTotal:profiles.length,selectedProfiles:selected.length,priorityProfiles:[...priority],results,market:await scanMarket(env)};}
+// Schedule by the last successful poll, not by the last changed listing.
+const HALF_HOUR_PROFILES = new Set(['11077002','11080367','8517496','11162944','10704279']);
+export function profileIntervalMinutes(profile) {
+  return String(profile)==='11093294' ? 10 : HALF_HOUR_PROFILES.has(String(profile)) ? 30 : 60;
+}
+export function profileDue(profile,lastSuccess,now=Date.now()) {
+  const t=Date.parse(lastSuccess || '');
+  return !Number.isFinite(t) || now-t>=profileIntervalMinutes(profile)*60000;
+}
+export async function scan(env,group=null,priorityProfiles=[]) {
+  if(!env.BIR_DB)throw Error('BIR_DB missing');
+  await ensureSchema(env.BIR_DB);
+  const profiles=(await env.BIR_DB.prepare("SELECT p.profile_id,s.last_success_at FROM kufar_profiles p LEFT JOIN kufar_bridge_state s ON s.profile_id=p.profile_id WHERE p.enabled=1 AND p.source='v7_census' ORDER BY p.profile_id").all()).results;
+  const now=Date.now();
+  const selected=profiles.filter(p=>profileDue(p.profile_id,p.last_success_at,now))
+    .sort((a,b)=>profileIntervalMinutes(a.profile_id)-profileIntervalMinutes(b.profile_id)||a.profile_id.localeCompare(b.profile_id));
+  const results=[],failures=[];
+  for(const p of selected) {
+    try { results.push(await scanProfile(env,p.profile_id)); }
+    catch(e) { failures.push({profile:p.profile_id,error:String(e)}); }
+  }
+  let market=null;
+  try { market=await scanMarket(env); }
+  catch(e) { failures.push({profile:'market',error:String(e)}); }
+  return {ok:failures.length===0,profilesTotal:profiles.length,selectedProfiles:selected.length,results,failures,market};
+}
 export default {async fetch(request,env){const u=new URL(request.url),path=u.pathname;if(path==='/health')return Response.json({ok:true,service:'kufar-bir-bridge',profileCoverage:'v7-census-plus-market'});if(path!=='/scan'||request.method!=='POST')return new Response('Not found',{status:404});if(!env.BRIDGE_SCAN_TOKEN||request.headers.get('authorization')!==`Bearer ${env.BRIDGE_SCAN_TOKEN}`)return new Response('Unauthorized',{status:401});try{const g=u.searchParams.get('group');return Response.json(await scan(env,g==='0'||g==='1'?Number(g):null));}catch(e){return Response.json({ok:false,error:String(e)},{status:503});}},async scheduled(_event,env,ctx){ctx.waitUntil(scan(env));}};
