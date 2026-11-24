@@ -1157,11 +1157,26 @@ def flush_auto_queue(db,tg,queue,local_now):
             save_auto_queue(db,queue)
             continue
         chat=str(remaining[0])
-        if not safe_send(tg,chat,alert.get('text',''),
-                         keyboard=alert.get('keyboard'),
-                         parse_mode=alert.get('parse_mode')):
-            # Retry on the next radar run without losing the original timestamp.
-            break
+        # Persist the Telegram API receipt together with the queue acknowledgement.
+        # A receipt means Telegram accepted the message, not that it was read.
+        db.execute("""CREATE TABLE IF NOT EXISTS telegram_delivery_receipts (
+            alert_id TEXT NOT NULL, chat_id TEXT NOT NULL, message_id INTEGER NOT NULL,
+            queued_at TEXT, sent_at TEXT NOT NULL, category TEXT NOT NULL, text TEXT,
+            PRIMARY KEY(alert_id,chat_id))""")
+        existing=db.query('SELECT message_id FROM telegram_delivery_receipts WHERE alert_id=? AND chat_id=?',[alert['id'],chat])
+        if not existing:
+            try:
+                response=tg.send(chat,alert.get('text',''),keyboard=alert.get('keyboard'),
+                                 parse_mode=alert.get('parse_mode'))
+                message_id=response['result']['message_id']
+            except Exception as exc:
+                print(f'TELEGRAM_SEND_ERROR type={type(exc).__name__}')
+                break
+            db.execute("""INSERT INTO telegram_delivery_receipts
+                (alert_id,chat_id,message_id,queued_at,sent_at,category,text)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(alert_id,chat_id) DO NOTHING""",
+                [alert['id'],chat,message_id,alert.get('queued_at'),
+                 datetime.now(timezone.utc).isoformat(),alert.get('category','violation'),alert.get('text','')])
         alert['pending_chats']=remaining[1:]
         sent+=1
         if not alert['pending_chats']:
