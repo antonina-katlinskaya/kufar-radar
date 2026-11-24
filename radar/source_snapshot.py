@@ -11,7 +11,16 @@ HISTORY_DB_ID = os.getenv(
     'd8dd0219-8070-4f48-980d-312eba26209e',
 )
 MAX_BIR_AGE = timedelta(minutes=35)
-MAX_KUFAR_AGE = timedelta(minutes=50)
+MAX_KUFAR_AGE = timedelta(minutes=75)
+HALF_HOUR_PROFILES = frozenset(('11077002','11080367','8517496','11162944','10704279'))
+
+def kufar_interval_minutes(profile_id):
+    pid = str(profile_id)
+    return 15 if pid == '11093294' else 30 if pid in HALF_HOUR_PROFILES else 60
+
+def kufar_max_age(profile_id):
+    # One scheduler tick of grace; health monitoring reports overdue profiles.
+    return timedelta(minutes=kufar_interval_minutes(profile_id) + 15)
 
 
 def history_db():
@@ -161,7 +170,7 @@ def load_kufar_profile_snapshot(db, profile_id):
         raise RuntimeError(
             f'New Kufar bridge has not completed a full cycle for profile {profile_id}'
         )
-    if not success or datetime.now(timezone.utc) - success.astimezone(timezone.utc) > MAX_KUFAR_AGE:
+    if not success or datetime.now(timezone.utc) - success.astimezone(timezone.utc) > kufar_max_age(profile_id):
         latest = db.query(
             'SELECT status,error FROM kufar_import_scans WHERE profile_id=? '
             'ORDER BY observed_at DESC LIMIT 1', [str(profile_id)]
