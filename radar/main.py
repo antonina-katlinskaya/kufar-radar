@@ -649,6 +649,14 @@ def choose_audit_targets(items,changed,previous_active,audit_today_on_baseline=F
         return changed,'bulk_incremental'
     return changed,'incremental'
 
+def is_commercial_listing(item):
+    """Exclude Kufar commercial category 1050 from residential BIR audits."""
+    raw=item.raw or {}
+    if str(raw.get('category'))=='1050':
+        return True
+    return any(p.get('p')=='category' and str(p.get('v'))=='1050'
+               for p in (raw.get('ad_parameters') or []) if isinstance(p,dict))
+
 def include_active_event_targets(items,targets,active_ad_ids):
     """Include selected current ads without duplicating already selected targets."""
     out=list(targets); seen={item.ad_id for item in out}
@@ -1339,6 +1347,16 @@ async def run():
         rechecked_active_events=len(targets)-before
         enqueue_pending_audits(pending,targets[before:],reason='bir_update_today_only')
         save_pending_audits(db,pending)
+    # Commercial listings remain in source history, but are not residential
+    # audit candidates and must never create missing-room alerts.
+    commercial_ids={item.ad_id for item in all_items if is_commercial_listing(item)}
+    # Include inactive historical commercial cards already stuck in the queue.
+    for row in db.query("SELECT j.key AS ad_id FROM state s,json_each(s.value) j JOIN kufar_ads a ON a.ad_id=j.key WHERE s.key=? AND json_valid(a.raw_json) AND CAST(json_extract(a.raw_json,'$.category') AS TEXT)='1050'",[PENDING_AUDITS_STATE]):
+        commercial_ids.add(str(row['ad_id']))
+    for ad_id in commercial_ids:
+        pending.pop(ad_id,None)
+    targets=[item for item in targets if item.ad_id not in commercial_ids]
+    save_pending_audits(db,pending)
     if len(targets)>AUDIT_BATCH_LIMIT:
         targets=targets[:AUDIT_BATCH_LIMIT]
     print(
