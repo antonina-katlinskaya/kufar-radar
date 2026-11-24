@@ -612,7 +612,7 @@ async def collect_kufar(db,profile):
         # new bridge has completed at least one trustworthy full cycle.
         items=current_kufar(db,profile_id)
         print(f'KUFAR_BRIDGE_PENDING profile={profile_id} detail={exc}')
-        return items,[],previous_active
+        return [],[],previous_active
     try:
         changed=save_kufar(db,items,profile_id)
     except InvalidKufarSnapshot as exc:
@@ -1232,8 +1232,23 @@ async def run():
     cleaned_polluted_pending=cleanup_polluted_strict_backfill(db,pending)
     profile_runs=[]; targets=[]; all_items=[]; current_selected_ids=set()
     kufar_changed_ad_ids=set()
-    for profile in KUFAR_PROFILES:
-        items,changed,previous_active=await collect_kufar(db,profile)
+    # Use the same verified, enabled census as the source collector.
+    census=history_db().query("SELECT profile_id,contact_names FROM kufar_profiles WHERE enabled=1 AND source='v7_census' ORDER BY profile_id")
+    configured={p['id']:p for p in KUFAR_PROFILES}
+    profiles=[]
+    for row in census:
+        pid=str(row['profile_id'])
+        profile=configured.get(pid) or {'id':pid,'label':row.get('contact_names') or f'Профиль {pid}','audit_today_on_baseline':True}
+        PROFILE_LABELS[pid]=profile['label']
+        profiles.append(profile)
+    if not profiles:
+        raise RuntimeError('No enabled verified Kufar profiles')
+    for profile in profiles:
+        try:
+            items,changed,previous_active=await collect_kufar(db,profile)
+        except Exception as exc:
+            print(f'::warning::KUFAR_PROFILE_FAILED profile={profile["id"]} type={type(exc).__name__}')
+            continue
         kufar_changed_ad_ids.update(item.ad_id for item in changed)
         all_items.extend(items)
         selected,selection_mode=choose_audit_targets(
