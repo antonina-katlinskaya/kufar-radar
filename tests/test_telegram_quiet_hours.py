@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,6 +10,12 @@ from radar.main import (
 class FakeDB:
     def __init__(self):
         self.state = {}
+        self.sql = sqlite3.connect(':memory:')
+        self.sql.row_factory = sqlite3.Row
+    def execute(self, statement, params=()):
+        return self.sql.execute(statement, params)
+    def query(self, statement, params=()):
+        return self.execute(statement, params).fetchall()
     def get_state(self, key, default=None):
         return self.state.get(key, default)
     def set_state(self, key, value):
@@ -23,6 +30,7 @@ class FakeTelegram:
         if str(chat) == str(self.fail_chat):
             raise RuntimeError('temporary Telegram failure')
         self.sent.append((str(chat), text, kwargs))
+        return {'ok':True, 'result':{'message_id':len(self.sent)}}
 
 
 MINSK = ZoneInfo('Europe/Minsk')
@@ -99,3 +107,4 @@ def test_technical_queue_keeps_owner_after_delivery_recheck():
     assert queue[0]['category']=='technical'
     assert flush_auto_queue(db,tg,queue,datetime(2026,11,18,10,0,tzinfo=MINSK))==1
     assert [chat for chat,_,_ in tg.sent]==['owner']
+
