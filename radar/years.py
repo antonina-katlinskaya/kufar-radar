@@ -36,3 +36,21 @@ def verified_bir_year(raw):
     deadline=normalize_year(str(raw.get('deadline') or '')[:4])
     # A disagreement between BIR's two fields requires manual verification.
     return year if year is not None and (deadline is None or deadline==year) else None
+
+
+def house_year_index(candidates):
+    from .house_directory import HOUSE_DIRECTORY, _building_number
+    from .matcher import norm_address
+    addresses = {}
+    for number, address in HOUSE_DIRECTORY.items():
+        addresses.setdefault(tuple(norm_address(address)), set()).add(number)
+    years = {}
+    for obj in candidates:
+        number = _building_number(obj.building_name)
+        if number in HOUSE_DIRECTORY:
+            raw = _raw(obj.raw)
+            if raw.get('god') is not None:
+                years.setdefault(number, set()).add(verified_bir_year(raw))
+    return {address: next(iter(years[number]))
+            for address, numbers in addresses.items() if len(numbers) == 1
+            for number in numbers if len(years.get(number, ())) == 1}
