@@ -203,6 +203,8 @@ export async function scan(env) {
       }
     }
     for(const old of previous) if(!seen.has(old.id)) {
+      // Confirmed absent objects remain in history; do not rewrite their counters on later scans.
+      if (!old.present && old.missing_checks >= 2) continue;
       const misses=old.missing_checks+1;
       writes.push(db.prepare('UPDATE bir_objects SET missing_checks=?,present=? WHERE id=?')
         .bind(misses,misses>=2?0:old.present,old.id));
