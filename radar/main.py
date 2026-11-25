@@ -24,6 +24,7 @@ INVITE_NOTICE_STATE='telegram_sister_invite_v1_sent'
 BOT_USERNAME='kufar_radarr_bot'
 
 TITLES={
+  'year':'Год сдачи дома на Kufar отличается от BIR',
   'price':'Цена на Kufar не совпадает с BIR',
   'area':'Расхождение по площади между Kufar и BIR',
   'rooms':'Расхождение по количеству комнат между Kufar и BIR',
@@ -35,6 +36,7 @@ TITLES={
 }
 
 CARD_TITLES={
+  'year':'НЕ СОВПАДАЕТ ГОД СДАЧИ',
   'price':'НЕ СОВПАДАЕТ ЦЕНА',
   'area':'НЕ СОВПАДАЕТ ПЛОЩАДЬ',
   'rooms':'НЕ СОВПАДАЕТ КОЛИЧЕСТВО КОМНАТ',
@@ -46,6 +48,7 @@ CARD_TITLES={
 }
 
 FIELD_LABELS={
+  'year':'Год сдачи',
   'price':'Цена',
   'area':'Площадь',
   'rooms':'Комнаты',
@@ -57,6 +60,7 @@ FIELD_LABELS={
 }
 
 FIELD_ICONS={
+  'year':'📅',
   'price':'💶',
   'area':'📐',
   'rooms':'🚪',
@@ -94,7 +98,7 @@ AUDIT_POLICY_RECHECK_STATE='strict_tuple_policy_v1_recheck_done'
 BIR_CURRENT_SPECIAL_PRICE_STATE='bir_current_listing_special_price_v1_rebuilt'
 REAPPEARED_FALSE_ALERT_CLEANUP_STATE='reappeared_false_alert_cleanup_v1'
 AUDIT_BATCH_LIMIT=200
-ACTIONABLE_FIELDS={'price','area','rooms','existence','combination'}
+ACTIONABLE_FIELDS={'price','area','rooms','year','existence','combination'}
 SERVICE_FIELDS=('address','floor','review')
 
 PROFILE_LABELS={p['id']:p['label'] for p in KUFAR_PROFILES}
@@ -415,7 +419,7 @@ def comparison_lines(row,include_label=False):
         parts += [f"**Kufar: {fmt_rooms(row.get('new_value'))} комн.**",f"**BIR: {fmt_rooms(row.get('bir_value'))} комн.**"]
     elif field=='floor':
         parts += [f"**Kufar: {fmt_rooms(row.get('new_value'))} этаж**",f"**BIR: {fmt_rooms(row.get('bir_value'))} этаж**"]
-    elif field=='address':
+    elif field in ('year','address'):
         parts += [f"**Kufar: {row.get('new_value') or '—'}**",f"**BIR: {row.get('bir_value') or '—'}**"]
     elif field=='existence':
         parts += ["**Kufar: объявление активно**","**BIR: объект не найден**"]
@@ -476,7 +480,7 @@ def fmt_event_group(db,events,k):
       k.rooms,k.area,k.floor,omit_fields=set(fields)
     )
 
-    for field in ['price','area','rooms','combination','existence','floor','address','review']:
+    for field in ['price','area','rooms','year','combination','existence','floor','address','review']:
         e=fields.get(field)
         if not e: continue
         parts.append('')
@@ -510,6 +514,7 @@ def compact_comparison(row):
         return f"{fmt_eur(row.get('new_value'))} → {fmt_eur(bir.get('regular') or bir.get('fast'))}"
     if field=='area': return f"{fmt_area(row.get('new_value'))} → {fmt_area(row.get('bir_value'))} м²"
     if field=='rooms': return f"{fmt_rooms(row.get('new_value'))} → {fmt_rooms(row.get('bir_value'))} комн."
+    if field=='year': return f"{row.get('new_value')} → {row.get('bir_value')} г."
     if field=='floor': return f"{fmt_rooms(row.get('new_value'))} → {fmt_rooms(row.get('bir_value'))} этаж"
     if field=='address': return f"{row.get('new_value') or '—'} → {row.get('bir_value') or '—'}"
     if field=='existence': return 'активно → объекта нет на BIR'
@@ -806,7 +811,11 @@ def process_updates(db,tg):
     offset=int(db.get_state('telegram_offset','0') or 0)
     initial_offset=offset
     force_chats=set(); show_chats=set(); review_chats=set(); joined_chats=set()
-    ups=tg.get_updates(offset)
+    try:
+        ups=tg.get_updates(offset)
+    except Exception as exc:
+        print(f'TELEGRAM_POLL_ERROR type={type(exc).__name__}')
+        return force_chats,show_chats,review_chats,joined_chats
     for u in ups:
         offset=max(offset,int(u['update_id'])+1)
         if 'message' in u:
@@ -871,7 +880,7 @@ def summary_rows(db):
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          LEFT JOIN bir_objects b ON b.object_key=e.object_key
          WHERE e.active=1 AND k.active=1
-           AND e.field_name IN ('price','area','rooms','existence','combination')
+           AND e.field_name IN ('price','area','rooms','year','existence','combination')
          ORDER BY e.occurred_at DESC'''
     )
 
@@ -928,7 +937,7 @@ def service_event_counts(db):
          FROM events e
          JOIN kufar_ads k ON k.ad_id=e.ad_id
          WHERE e.active=1 AND k.active=1 AND e.occurred_at>=?
-           AND e.field_name NOT IN ('price','area','rooms','existence','combination')
+           AND e.field_name NOT IN ('price','area','rooms','year','existence','combination')
          GROUP BY e.field_name ORDER BY e.field_name''',
       [today_start_utc()]
     )
@@ -1039,7 +1048,7 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None,servi
     title='☀️ **УТРЕННЯЯ ПРОВЕРКА' if mode=='morning' else '🔎 **ПРОВЕРКА ОБЪЯВЛЕНИЙ'
     parts=[f"{title} — {now.strftime('%d.%m')}**",'']
     if not rows:
-        parts.append('✅ **Нарушений цены, площади и количества комнат не обнаружено**')
+        parts.append('✅ **Нарушений цены, площади, комнатности и года сдачи не обнаружено**')
     else:
         parts.append(f"⚠️ **Найдено нарушений: {len(rows)}**")
         counts={}
@@ -1047,7 +1056,7 @@ def summary_overview(rows,bir_checked_at=None,mode='status',local_now=None,servi
             field=r.get('field_name')
             counts[field]=counts.get(field,0)+1
         parts.append('')
-        for field in ['price','area','rooms']:
+        for field in ['price','area','rooms','year']:
             if counts.get(field):
                 parts.append(f"{FIELD_ICONS.get(field,'⚠️')} {FIELD_LABELS.get(field,field)} — {counts[field]}")
         people={}
@@ -1145,8 +1154,8 @@ def flush_auto_queue(db,tg,queue,local_now):
         print(f'TELEGRAM_QUIET_HOURS pending={len(queue)}')
         return 0
     sent=0
-    while queue:
-        alert=queue[0]
+    unavailable=set()
+    for alert in list(queue):
         remaining=alert.get('pending_chats') or []
         owner=db.get_state('telegram_chat_id')
         if owner:
@@ -1161,35 +1170,39 @@ def flush_auto_queue(db,tg,queue,local_now):
                 alert['pending_chats']=remaining
                 save_auto_queue(db,queue)
         if not remaining:
-            queue.pop(0)
+            queue.remove(alert)
             save_auto_queue(db,queue)
             continue
-        chat=str(remaining[0])
-        # Persist the Telegram API receipt together with the queue acknowledgement.
-        # A receipt means Telegram accepted the message, not that it was read.
-        db.execute("""CREATE TABLE IF NOT EXISTS telegram_delivery_receipts (
-            alert_id TEXT NOT NULL, chat_id TEXT NOT NULL, message_id INTEGER NOT NULL,
-            queued_at TEXT, sent_at TEXT NOT NULL, category TEXT NOT NULL, text TEXT,
-            PRIMARY KEY(alert_id,chat_id))""")
-        existing=db.query('SELECT message_id FROM telegram_delivery_receipts WHERE alert_id=? AND chat_id=?',[alert['id'],chat])
-        if not existing:
-            try:
-                response=tg.send(chat,alert.get('text',''),keyboard=alert.get('keyboard'),
-                                 parse_mode=alert.get('parse_mode'))
-                message_id=response['result']['message_id']
-            except Exception as exc:
-                print(f'TELEGRAM_SEND_ERROR type={type(exc).__name__}')
-                break
-            db.execute("""INSERT INTO telegram_delivery_receipts
-                (alert_id,chat_id,message_id,queued_at,sent_at,category,text)
-                VALUES(?,?,?,?,?,?,?) ON CONFLICT(alert_id,chat_id) DO NOTHING""",
-                [alert['id'],chat,message_id,alert.get('queued_at'),
-                 datetime.now(timezone.utc).isoformat(),alert.get('category','violation'),alert.get('text','')])
-        alert['pending_chats']=remaining[1:]
-        sent+=1
-        if not alert['pending_chats']:
-            queue.pop(0)
-        save_auto_queue(db,queue)
+        for chat in list(remaining):
+            if chat in unavailable:
+                continue
+            # Persist the Telegram API receipt together with the queue acknowledgement.
+            # A receipt means Telegram accepted the message, not that it was read.
+            db.execute("""CREATE TABLE IF NOT EXISTS telegram_delivery_receipts (
+                alert_id TEXT NOT NULL, chat_id TEXT NOT NULL, message_id INTEGER NOT NULL,
+                queued_at TEXT, sent_at TEXT NOT NULL, category TEXT NOT NULL, text TEXT,
+                PRIMARY KEY(alert_id,chat_id))""")
+            existing=db.query('SELECT message_id FROM telegram_delivery_receipts WHERE alert_id=? AND chat_id=?',[alert['id'],chat])
+            if not existing:
+                try:
+                    response=tg.send(chat,alert.get('text',''),keyboard=alert.get('keyboard'),
+                                     parse_mode=alert.get('parse_mode'))
+                    message_id=response['result']['message_id']
+                except Exception as exc:
+                    print(f'TELEGRAM_SEND_ERROR type={type(exc).__name__}')
+                    unavailable.add(chat)
+                    continue
+                db.execute("""INSERT INTO telegram_delivery_receipts
+                    (alert_id,chat_id,message_id,queued_at,sent_at,category,text)
+                    VALUES(?,?,?,?,?,?,?) ON CONFLICT(alert_id,chat_id) DO NOTHING""",
+                    [alert['id'],chat,message_id,alert.get('queued_at'),
+                     datetime.now(timezone.utc).isoformat(),alert.get('category','violation'),alert.get('text','')])
+            remaining.remove(chat)
+            alert['pending_chats']=remaining
+            sent+=1
+            if not alert['pending_chats']:
+                queue.remove(alert)
+            save_auto_queue(db,queue)
     print(f'TELEGRAM_AUTO_DELIVERY sent={sent} pending={len(queue)}')
     return sent
 
@@ -1470,3 +1483,4 @@ if __name__=='__main__':
             print(f'RADAR_SKIPPED {exc}; source scan must succeed before comparisons resume')
         else:
             raise
+
