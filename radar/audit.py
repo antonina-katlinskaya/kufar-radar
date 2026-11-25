@@ -8,6 +8,8 @@ from .house_directory import resolved_bir_address
 from .store import fp, now, current_bir, inactive_bir
 from .collectors.kufar import is_mw_claimed
 from .config import settings
+from .years import house_year_index, kufar_year
+from .matcher import norm_address
 
 def ignored_area_violation(profile_id, field, kufar_value, bir_value):
     """Owner-requested exception: Hatkovskaya's recurring 44.00 -> 44.11 only."""
@@ -81,6 +83,7 @@ class AuditSession:
     def __init__(self, db, ad_ids=None):
         self.db=db
         self.candidates=current_bir(db)
+        self.house_years=house_year_index(self.candidates)
         self.inactive_candidates=inactive_bir(db)
         self.active={}
         for r in db.query('SELECT * FROM events WHERE active=1 AND occurred_at >= ?',[settings.live_cutoff_utc]):
@@ -383,6 +386,12 @@ class AuditSession:
         desired={field:value for field,value in desired.items()
                  if not ignored_area_violation(k.profile_id,field,value[0],value[1])}
 
+        declared = kufar_year(k.raw)
+        if declared is not None:
+            expected = getattr(self, 'house_years', {}).get(tuple(norm_address(k.address)))
+            if expected is not None and expected != declared:
+                desired['year'] = (str(declared), str(expected), 'NEW_MISMATCH')
+
         active=self.active.get(k.ad_id,{})
         new_events=[]
 
@@ -441,3 +450,4 @@ def audit_one(db,k):
 
 def sync_events(db,k,result):
     s=AuditSession(db); out=s.sync(k,result); s.flush(); return out
+

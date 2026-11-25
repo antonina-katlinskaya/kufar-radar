@@ -1,5 +1,16 @@
 const API='https://cre-api.kufar.by/ads-search/v1/engine/v2/search/rendered-paginated';
 const MARKET_PAGES=3;
+const storedYear = "(SELECT CASE json_type(p.value,'$.v') WHEN 'array' THEN json_extract(p.value,'$.v[0]') ELSE json_extract(p.value,'$.v') END FROM json_each(raw_json,'$.ad_parameters') p WHERE json_extract(p.value,'$.p')='year_built' LIMIT 1) AS year_built";
+function yearBuilt(raw) {
+  const value=param(raw?.ad_parameters,'year_built');
+  return value==null ? null : String(value);
+}
+function addYearDifference(old,row,diffs) {
+  old.year_built=old.year_built==null ? null : String(old.year_built);
+  row.year_built=yearBuilt(JSON.parse(row.raw_json));
+  if(old.year_built!==row.year_built)diffs.push('year_built');
+}
+
 // Spend two extra deep pages only on the affected Alyona Dovgun profile.
 // All other profile/page limits and the existing request pacing stay unchanged.
 export function deepPageBudget(profile) {
@@ -40,6 +51,8 @@ const addressTokens=s=>String(s||'').toLowerCase().replaceAll('ё','е').match(/
 function addressMatch(a,b) {const aa=addressTokens(a),bb=addressTokens(b),nums=new Set(aa.filter(x=>/\d/.test(x)));return !!(nums.size && bb.some(x=>nums.has(x)) && aa.some(x=>bb.includes(x)&&!/\d/.test(x)));}
 async function propose(db,r,now) {
  if(r.area==null||r.rooms==null||r.floor==null)return;
+ const raw=JSON.parse(r.raw_json);
+ if(String(raw.category)==='1050'||String(param(raw.ad_parameters,'category'))==='1050')return;
  const query=await db.prepare("SELECT id,house,CAST(json_extract(detail_json,'$.obschPloschad') AS REAL) AS area FROM bir_objects WHERE present=1 AND json_extract(detail_json,'$.comnat')=? AND json_extract(detail_json,'$.etaj')=? AND CAST(json_extract(detail_json,'$.obschPloschad') AS REAL) BETWEEN ? AND ?").bind(r.rooms,r.floor,r.area-0.11,r.area+0.11).all();
  const candidates=query.results.filter(x=>Number(x.area)===r.area || Math.round((Number(x.area)+1e-9)*10)/10===r.area);
  const addressed=candidates.filter(x=>addressMatch(r.address,HOUSE_ADDRESS[x.house]));
@@ -69,11 +82,11 @@ async function scanProfile(env,profile) {
   const rows=[...all.values()].filter(claimed).map(ad=>parsed(ad,profile));mw=rows.length;
   for(const r of rows)seenIds.add(r.id);
   const ids=rows.map(x=>x.id);const previous=new Map();
-  for(let i=0;i<ids.length;i+=100){const part=ids.slice(i,i+100);const q=await db.prepare(`SELECT ad_id,profile_id,price_eur,price_byn,area,rooms,floor,address,title,present FROM kufar_ads_live WHERE ad_id IN (${part.map(()=>'?').join(',')})`).bind(...part).all();for(const x of q.results)previous.set(x.ad_id,x);}
+  for(let i=0;i<ids.length;i+=100){const part=ids.slice(i,i+100);const q=await db.prepare(`SELECT ad_id,profile_id,price_eur,price_byn,area,rooms,floor,address,title,present,${storedYear} FROM kufar_ads_live WHERE ad_id IN (${part.map(()=>'?').join(',')})`).bind(...part).all();for(const x of q.results)previous.set(x.ad_id,x);}
   const writes=[],proposalRows=[];let added=0,changed=0;
   for(const r of rows){const old=previous.get(r.id),fields=['price_eur','price_byn','area','rooms','floor','address','title'];
    if(!old){writes.push(db.prepare('INSERT INTO kufar_ads_live(ad_id,profile_id,observed_at,list_time,price_eur,price_byn,area,rooms,floor,address,title,url,raw_json,first_seen,last_seen,present) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)').bind(r.id,profile,now,r.list_time,r.price_eur,r.price_byn,r.area,r.rooms,r.floor,r.address,r.title,r.url,r.raw_json,now,now));writes.push(event(db,r.id,now,scanId,'appeared'));proposalRows.push(r);added++;}
-   else {const diffs=fields.filter(k=>String(old[k]??'')!==String(r[k]??''));const returned=!old.present;
+   else {const diffs=fields.filter(k=>String(old[k]??'')!==String(r[k]??''));addYearDifference(old,r,diffs);const returned=!old.present;
     // Market discovery can create account:* rows before this verified profile
     // is crawled. Assign only those currently observed in the 8517496 feed;
     // this metadata-only repair produces no appeared/changed/returned event.
@@ -110,11 +123,11 @@ async function scanMarket(env) {
   let deepCursor=state.cursor||cursor,deepPage=state.cursor?state.page_number:MARKET_PAGES+1;
   for(let i=0;i<MARKET_PAGES&&deepCursor;i++){const p=await fetchMarket(deepCursor);seen+=p.ads.length;for(const ad of p.ads)if(ad.company_ad&&claimed(ad))ads.set(String(ad.ad_id),ad);deepCursor=p.next;deepPage++;}
   mw=ads.size;const accounts=await marketAccounts(db,ads);
-  const ids=[...ads.keys()],prior=new Map();for(let i=0;i<ids.length;i+=100){const q=await db.prepare(`SELECT ad_id,price_eur,price_byn,area,rooms,floor,address,title FROM kufar_ads_live WHERE ad_id IN (${ids.slice(i,i+100).map(()=>'?').join(',')})`).bind(...ids.slice(i,i+100)).all();for(const x of q.results)prior.set(x.ad_id,x);}
+  const ids=[...ads.keys()],prior=new Map();for(let i=0;i<ids.length;i+=100){const q=await db.prepare(`SELECT ad_id,price_eur,price_byn,area,rooms,floor,address,title,${storedYear} FROM kufar_ads_live WHERE ad_id IN (${ids.slice(i,i+100).map(()=>'?').join(',')})`).bind(...ids.slice(i,i+100)).all();for(const x of q.results)prior.set(x.ad_id,x);}
   const writes=[],proposals=[],newProfiles=new Map();
   for(const ad of ads.values()){const account=ad.account_id,profile=accounts.get(account)||`account:${account}`,r=parsed(ad,profile),old=prior.get(r.id);if(!accounts.has(account))newProfiles.set(account,ad);
    if(!old){writes.push(db.prepare('INSERT INTO kufar_ads_live(ad_id,profile_id,observed_at,list_time,price_eur,price_byn,area,rooms,floor,address,title,url,raw_json,first_seen,last_seen,present) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)').bind(r.id,profile,now,r.list_time,r.price_eur,r.price_byn,r.area,r.rooms,r.floor,r.address,r.title,r.url,r.raw_json,now,now));writes.push(event(db,r.id,now,scanId,'appeared'));proposals.push(r);added++;}
-   else {const diffs=['price_eur','price_byn','area','rooms','floor','address','title'].filter(k=>String(old[k]??'')!==String(r[k]??''));if(diffs.length){writes.push(db.prepare('UPDATE kufar_ads_live SET observed_at=?,last_seen=?,price_eur=?,price_byn=?,area=?,rooms=?,floor=?,address=?,title=?,url=?,raw_json=?,present=1 WHERE ad_id=?').bind(now,now,r.price_eur,r.price_byn,r.area,r.rooms,r.floor,r.address,r.title,r.url,r.raw_json,r.id));for(const k of diffs)writes.push(event(db,r.id,now,scanId,'field_changed',k,JSON.stringify(old[k]??null),JSON.stringify(r[k]??null)));if(diffs.some(k=>['area','rooms','floor','address'].includes(k)))proposals.push(r);changed++;}}
+   else {const diffs=['price_eur','price_byn','area','rooms','floor','address','title'].filter(k=>String(old[k]??'')!==String(r[k]??''));addYearDifference(old,r,diffs);if(diffs.length){writes.push(db.prepare('UPDATE kufar_ads_live SET observed_at=?,last_seen=?,price_eur=?,price_byn=?,area=?,rooms=?,floor=?,address=?,title=?,url=?,raw_json=?,present=1 WHERE ad_id=?').bind(now,now,r.price_eur,r.price_byn,r.area,r.rooms,r.floor,r.address,r.title,r.url,r.raw_json,r.id));for(const k of diffs)writes.push(event(db,r.id,now,scanId,'field_changed',k,JSON.stringify(old[k]??null),JSON.stringify(r[k]??null)));if(diffs.some(k=>['area','rooms','floor','address'].includes(k)))proposals.push(r);changed++;}}
   }
   for(const [account,ad] of newProfiles){const p=ad.account_parameters||[];await db.prepare('INSERT OR IGNORE INTO kufar_profiles(profile_id,account_id,company,contact_names,source,enabled,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?)').bind(`account:${account}`,account,param(p,'name'),param(p,'contact_person'),'market_discovery',1,now,now).run();}
   await batches(db,writes);for(const r of proposals)await propose(db,r,now);
@@ -150,3 +163,4 @@ export async function scan(env,group=null,priorityProfiles=[]) {
   return {ok:failures.length===0,profilesTotal:profiles.length,selectedProfiles:selected.length,results,failures,market};
 }
 export default {async fetch(request,env){const u=new URL(request.url),path=u.pathname;if(path==='/health')return Response.json({ok:true,service:'kufar-bir-bridge',profileCoverage:'v7-census-plus-market'});if(path!=='/scan'||request.method!=='POST')return new Response('Not found',{status:404});if(!env.BRIDGE_SCAN_TOKEN||request.headers.get('authorization')!==`Bearer ${env.BRIDGE_SCAN_TOKEN}`)return new Response('Unauthorized',{status:401});try{const g=u.searchParams.get('group');return Response.json(await scan(env,g==='0'||g==='1'?Number(g):null));}catch(e){return Response.json({ok:false,error:String(e)},{status:503});}},async scheduled(_event,env,ctx){ctx.waitUntil(scan(env));}};
+
