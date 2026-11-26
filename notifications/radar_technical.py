@@ -98,6 +98,25 @@ def observe_bir(state, problem, now):
     return None, False
 
 
+def observe_pipeline(state, problem, now, verified_success=False, quota=False):
+    old=state.get('pipeline_observation')
+    if problem is None:
+        if verified_success and old:
+            state.pop('pipeline_observation',None)
+            return None, True
+        return None, False
+    key,text=problem
+    if not old or old.get('key')!=key:
+        state['pipeline_observation']={'key':key,'first_at':now.isoformat(),'last_at':now.isoformat(),'checks':1}
+        return (problem if quota else None), True
+    elapsed=(now-datetime.fromisoformat(old['last_at'])).total_seconds()
+    if elapsed>=180:
+        old['checks']=old.get('checks',1)+1
+        old['last_at']=now.isoformat()
+        return (problem if quota or old['checks']>=2 else None), True
+    return (problem if quota else None), False
+
+
 def api(url, body=None, token=None, method=None, missing=False):
     headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'radar-technical-monitor'}
     if token:
@@ -165,6 +184,14 @@ def main():
     detail_path = Path(os.getenv('BIR_FAILURE_REASON_PATH', '/tmp/bir-refresh-failure.json'))
     detail = json.loads(detail_path.read_text()) if detail_path.exists() else {}
     pipeline = pipeline_problem(os.environ, detail)
+    # Do not report a single transient pipeline failure. Require a second
+    # independent run, but report confirmed quota exhaustion immediately.
+    pipeline_observed = pipeline
+    pipeline_verified = all(os.environ.get(key) == 'success' for key in
+                            ('BIR_REFRESH_OUTCOME','KUFAR_BRIDGE_OUTCOME','RADAR_SCAN_OUTCOME'))
+    pipeline, pipeline_changed = observe_pipeline(store.data, pipeline, now, pipeline_verified,
+                                                  7500 in detail.get('codes', []))
+    if pipeline_changed: store.save()
     try:
         snapshot=api(BIR_HEALTH_URL)
     except RuntimeError:
@@ -199,6 +226,9 @@ def main():
     active_keys={key for key,_ in problems}
     # A first failed health check is not a recovery; preserve an existing incident.
     if observed: active_keys.add(observed[0])
+    if pipeline_observed: active_keys.add(pipeline_observed[0])
+    if not pipeline_verified:
+        active_keys.update(k for k in ('bir_database','kufar_source','radar') if incidents.get(k,{}).get('active'))
     changed=False
     for key,incident in incidents.items():
         if key not in active_keys and incident.get('active'):
@@ -208,11 +238,13 @@ def main():
     if changed: store.save()
     for key,explanation in problems:
         previous=incidents.get(key,{})
+        if not previous.get('active'):
+            previous={}
         previous['active']=True
         previous['text']=explanation
         previous['run_url']=url
         last=previous.get('claimed_at')
-        due=not last or (now-datetime.fromisoformat(last)).total_seconds()>=4*3600
+        due=not last  # One notification per incident; no periodic repeats.
         incidents[key]=previous
         if daytime(now) and due:
             previous['claimed_at']=now.isoformat()
