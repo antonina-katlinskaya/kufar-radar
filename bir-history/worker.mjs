@@ -56,6 +56,27 @@ function listing(r, seen) {
   return {id:r.id,house:r.house,number:r.number,area:r.area,floor:r.floor,rooms:r.rooms,prices_eur:r.prices_eur,raw_cells_json:r.raw_cells_json,raw_html:r.raw_html,seen_utc:seen};
 }
 
+
+// Ignore only request-local comparison controls and paired BYN display amounts.
+export function stableListingHtml(html) {
+  if(typeof html!=='string') return null;
+  return html.replace(/(\bdata-favourite-id-table\s*=\s*")[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(")/gi,'$1$2')
+    .replace(/(<p\b[^>]*>\s*)[0-9][0-9 \u00a0\u202f.,]*(\s*<i\b[^>]*class="nbrb-icon nbrb-icon-byn"[^>]*>\s*<\/i>\s*<\/p>)(?=\s*<span\b[^>]*class="[^"]*\btprice\b[^"]*"[^>]*>\s*[0-9][0-9 \u00a0\u202f.,]*\s*€\s*<\/span>)/gi,'$1[BYN]$2');
+}
+function htmlCells(html) {
+  return JSON.stringify([...html.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(x=>norm(x[1])));
+}
+export function listingDifferences(before,after) {
+  const fields=['house','number','area','floor','rooms'];
+  const deltas=fields.filter(k=>String(before[k]??'')!==String(after[k]??''));
+  const oldHtml=stableListingHtml(before.raw_html),newHtml=stableListingHtml(after.raw_html);
+  const comparable=oldHtml!==null&&newHtml!==null&&
+    htmlCells(before.raw_html)===before.raw_cells_json&&htmlCells(after.raw_html)===after.raw_cells_json;
+  if(before.raw_cells_json!==after.raw_cells_json&&(!comparable||htmlCells(oldHtml)!==htmlCells(newHtml))) deltas.push('raw_cells_json');
+  if(JSON.stringify(before.prices_eur??null)!==JSON.stringify(after.prices_eur??null)&&!deltas.includes('raw_cells_json')) deltas.push('prices_eur');
+  return {deltas,htmlChanged:comparable?oldHtml!==newHtml:before.raw_html!==after.raw_html};
+}
+
 export function parseDetail(raw, id, oldDetail) {
   const d=JSON.parse(raw);
   if (!d || d.id !== id || d.object !== PROJECT) throw Error('Wrong ID or project in Bir detail');
@@ -169,7 +190,7 @@ export async function scan(env) {
         throw Error(`Bir migration ID mismatch: shared=${shared}, active=${active}, parsed=${parsed}; no inventory writes`);
     }
     const seen=new Set();
-    const writes=[];let appeared=0, changed=0, excludedNew=0;
+    const writes=[];let appeared=0, changed=0, excludedNew=0, presentationOnly=0;
     for(const r of rows) {
       if(excluded.has(r.id)) continue;
       const old=byId.get(r.id);
@@ -189,9 +210,8 @@ export async function scan(env) {
       }
       seen.add(r.id);
       const before=JSON.parse(old.listing_json), after=listing(r,before.seen_utc);
-      const fields=['house','number','area','floor','rooms','raw_cells_json'];
-      const deltas=fields.filter(k=>String(before[k]??'')!==String(after[k]??''));
-      const htmlChanged=before.raw_html!==r.raw_html;
+      const {deltas,htmlChanged}=listingDifferences(before,after);
+      if(!deltas.length&&!htmlChanged&&(before.raw_html!==r.raw_html||before.raw_cells_json!==after.raw_cells_json)) presentationOnly++;
       if(deltas.length || htmlChanged || !old.present || old.missing_checks) {
         after.seen_utc=now;
         writes.push(db.prepare('UPDATE bir_objects SET house=?,listing_json=?,last_seen=?,present=1,missing_checks=0 WHERE id=?')
@@ -220,7 +240,7 @@ export async function scan(env) {
       } catch(_) { detailErrors++; }
     }
     await log('ok',detailErrors?`Detail retries needed: ${detailErrors}`:null);
-    return {ok:true,scanId,sourceCount:count,parsed,appeared,changed,excludedNew,details,detailErrors};
+    return {ok:true,scanId,sourceCount:count,parsed,appeared,changed,excludedNew,details,detailErrors,presentationOnly};
   } catch(e) {
     await log('rejected',String(e));
     throw e;
