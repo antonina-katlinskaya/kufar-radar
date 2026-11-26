@@ -10,10 +10,18 @@ const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURICompo
 
 let successfulCheckedAt = null;
 let rowsWritten=0,rowsRead=0;
+const usageByOperation = new Map();
+let quotaExhausted = false;
+function reportUsage() {
+  console.log(JSON.stringify({birD1Usage:{rowsRead,rowsWritten,quotaExhausted,operations:Object.fromEntries(usageByOperation)}}));
+}
+process.on('exit', reportUsage);
+
 function exportMeta(checked_at) {
   if (process.env.BIR_EXPORT_META_PATH) writeFileSync(process.env.BIR_EXPORT_META_PATH, JSON.stringify({ok:true,checked_at}));
 }
 async function query(statements) {
+  if (quotaExhausted) throw Error('Daily free D1 quota exhausted; resets at 00:00 UTC');
   if (process.env.BIR_REFRESH_ALL_DETAILS === '1' && rowsWritten >= 25000 && statements.some(s=>!/^SELECT|^INSERT OR REPLACE INTO service_state/i.test(s.sql)))
     throw Error('Nightly D1 write budget reached (25000 rows); waiting for next run');
   const payload = statements.length === 1
@@ -31,6 +39,7 @@ async function query(statements) {
   if (!response.ok) {
     // Persist only numeric diagnostics; never include credentials or request URLs.
     const codes=(body.errors||[]).map(e=>Number(e.code)).filter(Number.isFinite);
+    if(codes.includes(7500)) quotaExhausted=true;
     if(process.env.BIR_FAILURE_REASON_PATH)
       writeFileSync(process.env.BIR_FAILURE_REASON_PATH,JSON.stringify({http:response.status,codes}));
     throw Error(`D1 HTTP ${response.status}; codes=${codes.join(',')}` +
@@ -44,7 +53,16 @@ async function query(statements) {
     if (statement.sql.startsWith('INSERT INTO bir_scans(') && statement.params?.[5] === 'ok')
       successfulCheckedAt = statement.params[2];
   }
-  for(const r of body.result) {rowsWritten+=r.meta?.rows_written??0;rowsRead+=r.meta?.rows_read??0;}
+  for(const [i,r] of body.result.entries()) {
+    const read=r.meta?.rows_read??0, written=r.meta?.rows_written??0;
+    rowsWritten+=written; rowsRead+=read;
+    const sql=statements[i].sql;
+    const operation=sql.match(/^(SELECT[\s\S]*?\bFROM|INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+([a-z_]+)/i);
+    const key=operation?operation[1].split(/\s+/)[0].toUpperCase()+' '+operation[2]:'other';
+    const cost=usageByOperation.get(key)??{queries:0,rowsRead:0,rowsWritten:0};
+    cost.queries++;cost.rowsRead+=read;cost.rowsWritten+=written;
+    usageByOperation.set(key,cost);
+  }
   return body.result;
 }
 
