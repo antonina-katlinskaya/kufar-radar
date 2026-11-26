@@ -75,6 +75,10 @@ jobs:
             if node bir-history/run.mjs; then
               exit 0
             fi
+            if python -c 'import json,sys; sys.exit(0 if 7500 in json.load(open(sys.argv[1])).get("codes", []) else 1)' "$BIR_FAILURE_REASON_PATH" 2>/dev/null; then
+              echo "D1 daily quota exhausted; no further attempts until quota reset"
+              exit 1
+            fi
             if [ "$attempt" -eq 3 ]; then
               echo "BIR refresh failed after 3 attempts"
               exit 1
