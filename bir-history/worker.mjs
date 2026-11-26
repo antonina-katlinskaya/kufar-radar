@@ -10,32 +10,63 @@ const BIR_REQUEST_TIMEOUT_MS = 15000;
 const BIR_REQUEST_ATTEMPTS = 3;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function bir(path, params) {
+export function sourceErrorKind(error) {
+  const code=String(error?.cause?.code??error?.code??'');
+  const message=String(error?.cause?.message??error?.message??error);
+  if(/CERT_|SELF_SIGNED|UNABLE_TO_VERIFY|TLS|certificate/i.test(code+' '+message)) return 'tls';
+  if(error?.status===429||error?.status>=500) return 'temporary_http';
+  if(error?.status>=400) return 'permanent_http';
+  if(error?.name==='TimeoutError'||error?.name==='AbortError'||/ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed|network/i.test(code+' '+message)) return 'network';
+  return 'other';
+}
+
+export async function bir(path, params, request=fetch, wait=sleep) {
   let lastError;
-  for (let attempt = 1; attempt <= BIR_REQUEST_ATTEMPTS; attempt++) {
+  for (let attempt=1; attempt<=BIR_REQUEST_ATTEMPTS; attempt++) {
     try {
-      const response = await fetch(BASE + path, {
+      const response=await request(BASE+path,{
         method:'POST',
-        headers:{
-          'Content-Type':'application/x-www-form-urlencoded',
-          'X-Requested-With':'XMLHttpRequest',
-          'Referer':REFERER,
-          'User-Agent':'Mozilla/5.0'
-        },
+        headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest','Referer':REFERER,'User-Agent':'Mozilla/5.0'},
         body:new URLSearchParams(params),
         signal:AbortSignal.timeout(BIR_REQUEST_TIMEOUT_MS)
       });
-      if (response.ok) return response.text();
-      const error = Error(`Bir ${path}: HTTP ${response.status}`);
-      if (response.status < 500 && response.status !== 429) throw error;
-      lastError = error;
-    } catch (error) {
-      lastError = error;
-      if (attempt === BIR_REQUEST_ATTEMPTS) break;
+      if(response.ok) return await response.text();
+      const error=Error('Bir '+path+': HTTP '+response.status);
+      error.status=response.status;
+      throw error;
+    } catch(error) {
+      lastError=error;
+      const kind=sourceErrorKind(error);
+      if(kind!=='network'&&kind!=='temporary_http') break;
+      if(attempt<BIR_REQUEST_ATTEMPTS) await wait(attempt*1000);
     }
-    await sleep(attempt * 1000);
   }
-  throw lastError ?? Error(`Bir ${path}: request failed`);
+  const kind=sourceErrorKind(lastError);
+  const error=Error('Bir '+path+' ['+kind+']: '+String(lastError?.message??lastError)+' '+String(lastError?.cause?.code??''));
+  error.kind=kind;
+  throw error;
+}
+
+export async function readInventory(request=bir,wait=sleep) {
+  const form={'object[]':PROJECT};
+  for(let attempt=1;attempt<=2;attempt++) {
+    // Wait for all three requests to finish before starting any replacement round.
+    const responses=await Promise.allSettled([
+      request('get-number-of-objects-for-pc/',form),
+      request('get-search-objects-in-building/',{...form,orderby:'nomerPomeschenia',ascdesc:'ASC',limit:'5000'}),
+      request('get-search-objects-in-building/',{...form,orderby:'nomerPomeschenia',ascdesc:'DESC',limit:'5000'})
+    ]);
+    const failed=responses.filter(r=>r.status==='rejected');
+    if(failed.length) throw failed.find(r=>r.reason?.kind==='tls'||r.reason?.kind==='permanent_http')?.reason??failed[0].reason;
+    const [counter,html,reverseHtml]=responses.map(r=>r.value);
+    const count=Number(counter.trim());
+    const rows=parseRows(html),reverse=parseRows(reverseHtml),parsed=rows.length;
+    const ids=new Set(rows.map(r=>r.id));
+    if(counter.trim()!==''&&Number.isInteger(count)&&count>=parsed&&parsed>0&&parsed<=5000&&parsed===reverse.length&&reverse.every(r=>ids.has(r.id))) return {count,rows};
+    const error=Error('Incomplete Bir table: counter='+count+', asc='+parsed+', desc='+reverse.length);
+    if(attempt===2) throw error;
+    await wait(2000);
+  }
 }
 
 export function parseRows(html) {
@@ -163,19 +194,9 @@ export async function scan(env) {
   const log=async(status,error=null)=>db.prepare('INSERT INTO bir_scans(scan_id,house,checked_at,source_count,parsed_count,status,error) VALUES(?,?,?,?,?,?,?)')
     .bind(scanId,PROJECT,now,count,parsed,status,error).run();
   try {
-    const form={'object[]':PROJECT};
-    const [counter,html,reverseHtml]=await Promise.all([
-      bir('get-number-of-objects-for-pc/',form),
-      bir('get-search-objects-in-building/',{...form,orderby:'nomerPomeschenia',ascdesc:'ASC',limit:'5000'}),
-      bir('get-search-objects-in-building/',{...form,orderby:'nomerPomeschenia',ascdesc:'DESC',limit:'5000'})
-    ]);
-    count=Number(counter.trim());
-    const rows=parseRows(html); parsed=rows.length;
-    const reverse=parseRows(reverseHtml);
-    const ids=new Set(rows.map(r=>r.id));
-    if (!Number.isInteger(count) || count<parsed || !parsed || parsed>5000 ||
-        parsed!==reverse.length || reverse.some(r=>!ids.has(r.id)))
-      throw Error(`Incomplete Bir table: counter=${count}, asc=${parsed}, desc=${reverse.length}`);
+    const inventory=await readInventory();
+    count=inventory.count;
+    const rows=inventory.rows; parsed=rows.length;
     const previous=(await db.prepare('SELECT * FROM bir_objects').all()).results;
     const byId=new Map(previous.map(x=>[x.id,x]));
     const excluded=new Set((await db.prepare('SELECT id FROM bir_excluded').all()).results.map(x=>x.id));
@@ -237,12 +258,12 @@ export async function scan(env) {
       const old=byId.get(r.id);
       try {
         await refreshDetail(db,old,now,scanId); details++;
-      } catch(_) { detailErrors++; }
+      } catch(error) { detailErrors++; console.warn('Bir detail failed:',r.id,String(error).slice(0,250)); if(/quota|daily.*limit|free tier|write budget/i.test(String(error))) throw error; }
     }
     await log('ok',detailErrors?`Detail retries needed: ${detailErrors}`:null);
     return {ok:true,scanId,sourceCount:count,parsed,appeared,changed,excludedNew,details,detailErrors,presentationOnly};
   } catch(e) {
-    await log('rejected',String(e));
+    try { await log('rejected',String(e)); } catch(logError) { console.error('Bir rejection log failed:',String(logError)); }
     throw e;
   }
 }
