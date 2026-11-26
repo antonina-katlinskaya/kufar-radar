@@ -1,4 +1,4 @@
-import httpx, os
+import httpx, os, time
 from .config import settings
 
 class Telegram:
@@ -25,9 +25,25 @@ class Telegram:
     def get_updates(self,offset=None):
         p={'timeout':0,'allowed_updates':['message','callback_query']}
         if offset is not None: p['offset']=offset
-        r=httpx.get(self.base+'/getUpdates',params=p,timeout=30)
-        r.raise_for_status()
-        data=r.json()
+        # Polling with the identical offset is safe to retry; never retry a send blindly.
+        for attempt in range(3):
+            try:
+                r=httpx.get(self.base+'/getUpdates',params=p,timeout=30)
+                r.raise_for_status()
+                data=r.json()
+                break
+            except httpx.HTTPStatusError as exc:
+                if attempt==2 or exc.response.status_code not in (429,500,502,503,504):
+                    raise RuntimeError(f'Telegram getUpdates HTTP {exc.response.status_code}') from None
+                delay=2*(attempt+1)
+                if exc.response.status_code==429:
+                    try: delay=max(delay,int(exc.response.json().get('parameters',{}).get('retry_after',0)))
+                    except (ValueError,TypeError): pass
+                    if delay>10: raise RuntimeError('Telegram getUpdates rate limit; defer to next run') from None
+                time.sleep(delay)
+            except (httpx.TransportError,ValueError):
+                if attempt==2: raise RuntimeError('Telegram getUpdates transport or response failure') from None
+                time.sleep(2*(attempt+1))
         if not data.get('ok'):
             raise RuntimeError(f"Telegram getUpdates failed: {data.get('description')}")
         return data.get('result',[])
